@@ -349,7 +349,7 @@ export default function App() {
                 style={{ background:"none", border:"none", cursor:"pointer", fontSize:18, color:"#aaa", padding:"4px 6px", borderRadius:6, lineHeight:1 }}>⚙</button>
               {showSettingsMenu && (
                 <div className="dropdown-menu settings-dropdown">
-                  <button className="dropdown-item" onClick={exportBackup}>📤 ייצוא גיבוי</button>
+                  <button className="dropdown-item" onClick={exportBackup}>📤 גיבוי</button>
                   <button className="dropdown-item" onClick={importBackup}>📥 ייבוא גיבוי</button>
                   <div className="dropdown-divider" />
                   <button className="dropdown-item" onClick={shareWhatsApp}>💬 שתף ב-WhatsApp</button>
