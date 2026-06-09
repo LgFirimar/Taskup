@@ -93,6 +93,7 @@ export default function App() {
   const [listItemInput, setListItemInput] = useState("");
   const [newListName, setNewListName] = useState("");
   const [showNewListInput, setShowNewListInput] = useState(false);
+  const [parsingList, setParsingList] = useState(false);
 
   const profileMenuRef = useRef(null);
   const settingsMenuRef = useRef(null);
@@ -131,9 +132,36 @@ export default function App() {
   const deleteShoppingItem = (lid, iid) => updateProfile(p => ({ ...p, shopping: (p.shopping||[]).map(l => l.id===lid ? {...l,items:l.items.filter(i=>i.id!==iid)} : l) }));
   const deleteShoppingList = (lid) => { updateProfile(p => ({ ...p, shopping: (p.shopping||[]).filter(l=>l.id!==lid) })); if (openListId===lid) { setOpenListId(null); setOpenListType(null); } };
 
+  const parseAndAddItems = async (listId, text) => {
+    if (!text.trim()) return;
+    // client-side split by comma / newline / semicolon
+    const clientItems = text.split(/[,;\n]/).map(s=>s.trim()).filter(Boolean);
+    if (clientItems.length > 1) {
+      updateProfile(p => ({...p, shopping:(p.shopping||[]).map(l=>l.id===listId?{...l,items:[...l.items,...clientItems.map(t=>({id:uid(),text:t}))]}:l)}));
+      return;
+    }
+    // single sentence → try AI
+    setParsingList(true);
+    try {
+      const res = await fetch(`${WORKER_URL}/parse-list`, {
+        method:"POST", headers:{"content-type":"application/json"},
+        body:JSON.stringify({text}),
+      });
+      if (!res.ok) throw new Error();
+      const {items} = await res.json();
+      if (items?.length) {
+        updateProfile(p => ({...p, shopping:(p.shopping||[]).map(l=>l.id===listId?{...l,items:[...l.items,...items.map(t=>({id:uid(),text:t}))]}:l)}));
+        setParsingList(false); return;
+      }
+    } catch {}
+    // fallback: add as single item
+    addShoppingItem(listId, text);
+    setParsingList(false);
+  };
+
   // ── Notes ─────────────────────────────────────────────────────────────────
   const notesList = getProfile().notes || [];
-  const addNote = (name) => { if (!name.trim()) return; updateProfile(p => ({ ...p, notes: [...(p.notes||[]), {id:uid(), name:name.trim(), items:[]}] })); };
+  const addNote = (name) => { if (!name.trim()) return; updateProfile(p => ({ ...p, notes: [...(p.notes||[]), {id:uid(), name:name.trim(), content:""}] })); };
   const addNoteItem = (nid, text) => { if (!text.trim()) return; updateProfile(p => ({ ...p, notes: (p.notes||[]).map(n => n.id===nid ? {...n,items:[...n.items,{id:uid(),text:text.trim()}]} : n) })); };
   const deleteNoteItem = (nid, iid) => updateProfile(p => ({ ...p, notes: (p.notes||[]).map(n => n.id===nid ? {...n,items:n.items.filter(i=>i.id!==iid)} : n) }));
   const deleteNote = (nid) => { updateProfile(p => ({ ...p, notes: (p.notes||[]).filter(n=>n.id!==nid) })); if (openListId===nid) { setOpenListId(null); setOpenListType(null); } };
@@ -247,6 +275,10 @@ export default function App() {
 
   // ── AI breakdown ──────────────────────────────────────────────────────────
   const breakdownTask = async (taskId, taskText) => {
+    // capture nav state before await (avoids stale closure)
+    const capTab = activeTab;
+    const capSubtab = activeSubtab;
+    const hasSub = !!currentSubtab;
     setBreakingDownId(taskId); setExpandedTaskId(taskId);
     try {
       const res = await fetch(`${WORKER_URL}/breakdown`, {
@@ -255,8 +287,18 @@ export default function App() {
       });
       if (!res.ok) throw new Error();
       const {steps} = await res.json();
-      if (steps?.length) steps.forEach(s=>addSubtask(taskId,s));
-    } catch { /* fall back to manual */ }
+      if (steps?.length) {
+        const newSubs = steps.map(text => ({id:uid(), text, done:false}));
+        setTabs(prev => prev.map(t => {
+          if (t.id !== capTab) return t;
+          const updateTasks = (tasks) => tasks.map(task =>
+            task.id === taskId ? {...task, subtasks:[...(task.subtasks||[]),...newSubs]} : task
+          );
+          if (hasSub) return {...t, subtabs:t.subtabs.map(s=>s.id===capSubtab?{...s,tasks:updateTasks(s.tasks)}:s)};
+          return {...t, tasks:updateTasks(t.tasks)};
+        }));
+      }
+    } catch { /* stays in manual mode */ }
     setBreakingDownId(null);
   };
 
@@ -448,31 +490,44 @@ export default function App() {
                 style={{background:"none",border:"none",fontSize:13,color:"#e07070",cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>מחק</button>
             </div>
 
-            <div style={{flex:1,overflowY:"auto",padding:"8px 20px"}}>
-              {openList.items.length===0&&(
-                <div style={{color:"#ccc",fontSize:14,textAlign:"center",padding:"40px 0"}}>
-                  {openListType==="shopping"?"רשימה ריקה — הוסיפי פריט למטה":"פתק ריק — התחילי לכתוב למטה"}
-                </div>
-              )}
-              {openList.items.map(item=>(
-                <div key={item.id} className="list-item-row">
-                  <span style={{width:7,height:7,borderRadius:"50%",background:accent,flexShrink:0}}/>
-                  <span style={{flex:1,fontSize:15,color:"#1a1a1a",lineHeight:1.5}}>{item.text}</span>
-                  <button onClick={()=>openListType==="shopping"?deleteShoppingItem(openListId,item.id):deleteNoteItem(openListId,item.id)}
-                    style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}}>✕</button>
-                </div>
-              ))}
-            </div>
+            {/* ── NOTES: free textarea ── */}
+            {openListType==="notes"&&(
+              <textarea
+                style={{flex:1,padding:"20px",fontFamily:"'Heebo',sans-serif",fontSize:16,lineHeight:1.8,border:"none",outline:"none",resize:"none",direction:"rtl",color:"#1a1a1a",background:"white"}}
+                placeholder="כתבי כאן בחופשיות..."
+                value={openList.content||""}
+                onChange={e=>updateProfile(p=>({...p,notes:(p.notes||[]).map(n=>n.id===openListId?{...n,content:e.target.value}:n)}))}
+              />
+            )}
 
-            <div style={{padding:"12px 20px 28px",borderTop:"1px solid #ebebea",background:"white"}}>
-              <div style={{display:"flex",gap:10}}>
-                <input autoFocus className="plain-input" style={{flex:1,fontSize:15}}
-                  placeholder={openListType==="shopping"?"הוסיפי פריט...":"כתבי משהו..."}
-                  value={listItemInput} onChange={e=>setListItemInput(e.target.value)}
-                  onKeyDown={e=>{if(e.key==="Enter"){if(openListType==="shopping")addShoppingItem(openListId,listItemInput);else addNoteItem(openListId,listItemInput);setListItemInput("");}}}/>
-                <button className="add-btn" onClick={()=>{if(openListType==="shopping")addShoppingItem(openListId,listItemInput);else addNoteItem(openListId,listItemInput);setListItemInput("");}}>+</button>
+            {/* ── SHOPPING: items list ── */}
+            {openListType==="shopping"&&<>
+              <div style={{flex:1,overflowY:"auto",padding:"8px 20px"}}>
+                {openList.items.length===0&&(
+                  <div style={{color:"#ccc",fontSize:14,textAlign:"center",padding:"40px 0"}}>רשימה ריקה — הוסיפי פריטים למטה</div>
+                )}
+                {openList.items.map(item=>(
+                  <div key={item.id} className="list-item-row">
+                    <span style={{width:7,height:7,borderRadius:"50%",background:accent,flexShrink:0}}/>
+                    <span style={{flex:1,fontSize:15,color:"#1a1a1a",lineHeight:1.5}}>{item.text}</span>
+                    <button onClick={()=>deleteShoppingItem(openListId,item.id)}
+                      style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}}>✕</button>
+                  </div>
+                ))}
               </div>
-            </div>
+              <div style={{padding:"12px 20px 28px",borderTop:"1px solid #ebebea",background:"white"}}>
+                <div style={{fontSize:11,color:"#bbb",marginBottom:6,fontWeight:600}}>פסיקים בין פריטים, או משפט חופשי</div>
+                <div style={{display:"flex",gap:10}}>
+                  <input autoFocus className="plain-input" style={{flex:1,fontSize:15}}
+                    placeholder='חלב, ביצים, לחם  או  "תקני גם יוגורט"'
+                    value={listItemInput} onChange={e=>setListItemInput(e.target.value)}
+                    onKeyDown={e=>{if(e.key==="Enter"){parseAndAddItems(openListId,listItemInput);setListItemInput("");}}}/>
+                  <button className="add-btn" style={{minWidth:52}} onClick={()=>{parseAndAddItems(openListId,listItemInput);setListItemInput("");}} disabled={parsingList}>
+                    {parsingList?<div className="spinner" style={{borderTopColor:"white",borderColor:"rgba(255,255,255,0.3)"}}/>:"+"}
+                  </button>
+                </div>
+              </div>
+            </>}
           </div>
         )}
 

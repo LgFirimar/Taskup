@@ -32,6 +32,29 @@ export default {
       return new Response(JSON.stringify({ steps }), { headers: { ...CORS, "content-type": "application/json" } });
     }
 
+    if (request.method === "POST" && url.pathname === "/parse-list") {
+      const { text } = await request.json();
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": env.ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 300,
+          messages: [{
+            role: "user",
+            content: `חלצי את פריטי הקניות מהטקסט הבא. החזירי כל פריט בשורה נפרדת בלבד, ללא מספרים ללא מקפים ללא כוכביות ללא כמויות.\n\nטקסט: "${text}"`,
+          }],
+        }),
+      });
+      const data = await res.json();
+      const items = (data.content?.[0]?.text || "").split("\n").map(s => s.trim()).filter(Boolean);
+      return new Response(JSON.stringify({ items }), { headers: { ...CORS, "content-type": "application/json" } });
+    }
+
     return new Response("Not found", { status: 404 });
   },
 };
