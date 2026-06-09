@@ -238,6 +238,11 @@ export default function App() {
     .dropdown-item.danger:hover { background:#fef2f2; }
     .dropdown-divider { height:1px;background:#f0f0ef;margin:4px 0; }
     .profile-avatar { width:26px;height:26px;border-radius:50%;background:#2d6a4f;color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0; }
+    .main-grid { display:grid;grid-template-columns:1fr 1fr;gap:32px;align-items:start; }
+    @media (max-width:640px) {
+      .main-grid { grid-template-columns:1fr; gap:24px; }
+      .dropdown-menu { position:fixed;bottom:0;left:0;right:0;top:auto;border-radius:16px 16px 0 0;min-width:unset;max-width:100%; }
+    }
   `;
 
   // ── Profile modal ──────────────────────────────────────────────────────────
@@ -417,7 +422,7 @@ export default function App() {
               )}
             </div>
 
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:32, alignItems:"start" }}>
+            <div className="main-grid">
               {/* TASKS */}
               <div>
                 <div style={{ display:"flex", alignItems:"center", marginBottom:12 }}>
