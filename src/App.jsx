@@ -51,7 +51,16 @@ export default function App() {
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
 
   // ── Navigation ─────────────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState(null);
+  const [activeTab, setActiveTab] = useState(() => {
+    const d = loadStorage();
+    const pid = d.activeProfile && d.profiles?.[d.activeProfile] ? d.activeProfile : null;
+    if (!pid) return null;
+    const profile = d.profiles[pid];
+    const t = profile.tabs || [];
+    if (!t.length) return null;
+    return profile.defaultTab && t.find(x => x.id === profile.defaultTab)
+      ? profile.defaultTab : t[0].id;
+  });
   const [activeSubtab, setActiveSubtab] = useState(null);
   const [newTabInput, setNewTabInput] = useState("");
   const [showNewTab, setShowNewTab] = useState(false);
@@ -107,7 +116,16 @@ export default function App() {
     setActiveProfileId(id); setActiveTab(null); setActiveSubtab(null);
     setNewProfileName(""); setShowProfileModal(false);
   };
-  const switchProfile = (id) => { setActiveProfileId(id); setActiveTab(null); setActiveSubtab(null); setShowProfileMenu(false); };
+  const switchProfile = (id) => {
+    const profile = profiles[id];
+    const t = profile?.tabs || [];
+    const def = profile?.defaultTab && t.find(x => x.id === profile.defaultTab) ? profile.defaultTab : t[0]?.id || null;
+    setActiveProfileId(id); setActiveTab(def); setActiveSubtab(null); setShowProfileMenu(false);
+  };
+
+  const setDefaultTab = (tabId) => {
+    setProfiles(prev => ({ ...prev, [activeProfileId]: { ...prev[activeProfileId], defaultTab: tabId } }));
+  };
   const deleteCurrentProfile = () => {
     if (!window.confirm(`למחוק את הפרופיל "${profiles[activeProfileId]?.name}"?`)) return;
     const remaining = Object.keys(profiles).filter(id => id !== activeProfileId);
@@ -163,7 +181,15 @@ export default function App() {
     setTabs(p => [...p, { id, label: name, color: TAB_COLORS[p.length % TAB_COLORS.length], subtabs: [], tasks: [], reminders: [] }]);
     setNewTabInput(""); setShowNewTab(false); setActiveTab(id); setActiveSubtab(null);
   };
-  const deleteTab = (id) => { setTabs(p => p.filter(t => t.id !== id)); if (activeTab === id) { setActiveTab(null); setActiveSubtab(null); } };
+  const deleteTab = (id) => {
+    setTabs(p => p.filter(t => t.id !== id));
+    if (activeTab === id) {
+      const remaining = tabs.filter(t => t.id !== id);
+      const profile = profiles[activeProfileId];
+      const def = profile?.defaultTab && remaining.find(t => t.id === profile.defaultTab) ? profile.defaultTab : remaining[0]?.id || null;
+      setActiveTab(def); setActiveSubtab(null);
+    }
+  };
   const addSubtab = () => {
     const name = newSubInput.trim(); if (!name) return; const id = uid();
     setTabs(prev => prev.map(t => t.id === activeTab ? { ...t, subtabs: [...t.subtabs, { id, label: name, tasks: [], reminders: [] }] } : t));
@@ -469,8 +495,16 @@ export default function App() {
                 <span style={{ width:8,height:8,borderRadius:"50%",background:t.color,flexShrink:0 }} />
                 {t.label}
                 {activeTab===t.id && (
-                  <span className="icon-btn del" style={{ fontSize:11,marginRight:-2,padding:0 }}
-                    onClick={e => { e.stopPropagation(); deleteTab(t.id); }}>✕</span>
+                  <>
+                    <span
+                      onClick={e => { e.stopPropagation(); setDefaultTab(t.id); }}
+                      title="הגדרי ככרטיסייה ראשית"
+                      style={{ fontSize:12,cursor:"pointer",color:profiles[activeProfileId]?.defaultTab===t.id?"#f4a261":"#ddd",marginRight:-2,lineHeight:1 }}>
+                      ★
+                    </span>
+                    <span className="icon-btn del" style={{ fontSize:11,marginRight:-2,padding:0 }}
+                      onClick={e => { e.stopPropagation(); deleteTab(t.id); }}>✕</span>
+                  </>
                 )}
               </button>
             ))}
