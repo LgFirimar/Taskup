@@ -239,9 +239,10 @@ export default function App() {
     .dropdown-divider { height:1px;background:#f0f0ef;margin:4px 0; }
     .profile-avatar { width:26px;height:26px;border-radius:50%;background:#2d6a4f;color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0; }
     .main-grid { display:grid;grid-template-columns:1fr 1fr;gap:32px;align-items:start; }
+    .settings-dropdown { left:0;right:auto; }
     @media (max-width:640px) {
       .main-grid { grid-template-columns:1fr; gap:24px; }
-      .dropdown-menu { position:fixed;bottom:0;left:0;right:0;top:auto;border-radius:16px 16px 0 0;min-width:unset;max-width:100%; }
+      .dropdown-menu { max-width:calc(100vw - 24px); }
     }
   `;
 
@@ -347,7 +348,7 @@ export default function App() {
               <button onClick={() => setShowSettingsMenu(p => !p)}
                 style={{ background:"none", border:"none", cursor:"pointer", fontSize:18, color:"#aaa", padding:"4px 6px", borderRadius:6, lineHeight:1 }}>⚙</button>
               {showSettingsMenu && (
-                <div className="dropdown-menu">
+                <div className="dropdown-menu settings-dropdown">
                   <button className="dropdown-item" onClick={exportBackup}>📤 ייצוא גיבוי</button>
                   <button className="dropdown-item" onClick={importBackup}>📥 ייבוא גיבוי</button>
                   <div className="dropdown-divider" />
