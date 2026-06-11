@@ -164,8 +164,9 @@ export default function App() {
   useEffect(()=>{ openListTypeRef.current=openListType; },[openListType]);
   useEffect(()=>{ profilesRef.current=profiles; },[profiles]);
 
-  // ── Voice recognition setup ────────────────────────────────────────────────
+  // ── Voice recognition setup — starts only after splash is done ────────────
   useEffect(()=>{
+    if(showSplash) return; // wait for splash to finish before requesting mic
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
     if(!SR) return;
 
@@ -239,7 +240,7 @@ export default function App() {
 
     try{ r.start(); setVoiceState("idle"); }catch{}
     return ()=>{ try{ r.stop(); }catch{} };
-  },[]);
+  },[showSplash]);
 
   // ── Derived tabs ──────────────────────────────────────────────────────────
   const tabs = profiles[activeProfileId]?.tabs||[];
