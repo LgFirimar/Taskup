@@ -315,7 +315,7 @@ export default function App() {
   const projects = getProfile().projects||[];
   const openProject = projects.find(p=>p.id===openProjectId)||null;
 
-  const addProject = (name)=>{ if(!name.trim())return; const id=uid(); updateProfile(p=>({...p,projects:[...(p.projects||[]),{id,name:name.trim(),tasks:[],timeline:[],bubbles:[],board:[]}]})); setOpenProjectId(id); setShowProjects(false); setProjectView("tasks"); };
+  const addProject = (name)=>{ if(!name.trim())return; const id=uid(); updateProfile(p=>({...p,projects:[...(p.projects||[]),{id,name:name.trim(),tasks:[],timeline:[],bubbles:[],board:[]}]})); setOpenProjectId(id); setShowProjects(false); setProjectView("overview"); };
   const deleteProject = (pid)=>{ updateProfile(p=>({...p,projects:(p.projects||[]).filter(pj=>pj.id!==pid)})); if(openProjectId===pid){setOpenProjectId(null);} };
 
   const updateProject = (pid,fn)=>updateProfile(p=>({...p,projects:(p.projects||[]).map(pj=>pj.id===pid?fn(pj):pj)}));
@@ -1004,13 +1004,96 @@ export default function App() {
             {/* Project detail */}
             {openProject&&(<>
               {/* View tabs */}
-              <div style={{display:"flex",gap:0,background:"white",borderBottom:"1px solid #eeeef5",padding:"0 20px"}}>
-                {[["tasks","משימות"],["timeline","לו״ז"],["brainstorm","Brain Storm"],["board","השראה"]].map(([v,label])=>(
-                  <button key={v} onClick={()=>setProjectView(v)} style={{padding:"11px 14px",border:"none",background:"none",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:13,fontWeight:projectView===v?700:400,color:projectView===v?accent:"#aaa",borderBottom:projectView===v?`2px solid ${accent}`:"2px solid transparent",transition:"all 0.15s"}}>{label}</button>
+              <div style={{display:"flex",gap:0,background:"white",borderBottom:"1px solid #eeeef5",padding:"0 20px",overflowX:"auto"}}>
+                {[["overview","סקירה"],["tasks","משימות"],["timeline","לו״ז"],["brainstorm","Brain Storm"],["board","השראה"]].map(([v,label])=>(
+                  <button key={v} onClick={()=>setProjectView(v)} style={{padding:"11px 14px",border:"none",background:"none",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:13,fontWeight:projectView===v?700:400,color:projectView===v?accent:"#aaa",borderBottom:projectView===v?`2px solid ${accent}`:"2px solid transparent",transition:"all 0.15s",whiteSpace:"nowrap"}}>{label}</button>
                 ))}
               </div>
 
               <div style={{flex:1,overflowY:"auto",padding:"20px"}}>
+
+                {/* OVERVIEW dashboard */}
+                {projectView==="overview"&&(()=>{
+                  const pendingTasks=(openProject.tasks||[]).filter(t=>!t.done);
+                  const doneTasks=(openProject.tasks||[]).filter(t=>t.done);
+                  const tl=openProject.timeline||[];
+                  const bubbles=openProject.bubbles||[];
+                  const board=openProject.board||[];
+                  const SectionHead=({title,view,count})=>(
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,marginTop:22}}>
+                      <span style={{fontWeight:700,fontSize:14,color:"#1a1a2e"}}>{title}{count>0&&<span style={{marginRight:6,background:"#f0f0f8",color:"#8888b8",borderRadius:100,fontSize:11,padding:"1px 7px",fontWeight:600}}>{count}</span>}</span>
+                      <button onClick={()=>setProjectView(view)} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:accent,fontFamily:"'Heebo',sans-serif",fontWeight:600}}>ראה הכל ←</button>
+                    </div>
+                  );
+                  return(<>
+                    {/* Tasks preview */}
+                    <SectionHead title="משימות" view="tasks" count={pendingTasks.length}/>
+                    {pendingTasks.length===0&&doneTasks.length===0&&<div className="empty-state">אין משימות עדיין</div>}
+                    <div style={{background:"white",borderRadius:14,overflow:"hidden",boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
+                      {pendingTasks.slice(0,3).map((t,i)=>(
+                        <div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:i<Math.min(pendingTasks.length,3)-1?"1px solid #f5f5fc":"none",borderRight:`3px solid ${accent}`}}>
+                          <button onClick={()=>toggleProjectTask(openProject.id,t.id)} style={{width:18,height:18,borderRadius:4,border:`2px solid #dde`,background:"white",cursor:"pointer",flexShrink:0}}/>
+                          <span style={{fontSize:13,color:"#1a1a2e",flex:1}}>{t.text}</span>
+                          {(t.subtasks||[]).length>0&&<span style={{fontSize:11,color:"#bbb"}}>{(t.subtasks||[]).filter(s=>s.done).length}/{(t.subtasks||[]).length}</span>}
+                        </div>
+                      ))}
+                      {pendingTasks.length>3&&<div style={{padding:"8px 14px",fontSize:12,color:"#bbb",cursor:"pointer"}} onClick={()=>setProjectView("tasks")}>+ עוד {pendingTasks.length-3} משימות</div>}
+                    </div>
+
+                    {/* Timeline preview */}
+                    <SectionHead title="לוח זמנים" view="timeline" count={tl.length}/>
+                    {tl.length===0&&<div className="empty-state">אין אבני דרך עדיין</div>}
+                    <div style={{background:"white",borderRadius:14,padding:"12px 16px",boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
+                      {tl.slice(0,3).map((item,i)=>(
+                        <div key={item.id} style={{display:"flex",alignItems:"center",gap:12,marginBottom:i<Math.min(tl.length,3)-1?10:0}}>
+                          <div style={{width:10,height:10,borderRadius:"50%",background:accent,flexShrink:0}}/>
+                          <span style={{fontSize:11,color:"#aaa",fontWeight:600,minWidth:50}}>{item.date?new Date(item.date+"T00:00:00").toLocaleDateString("he-IL",{day:"numeric",month:"short"}):""}</span>
+                          <span style={{fontSize:13,color:"#1a1a2e"}}>{item.text}</span>
+                        </div>
+                      ))}
+                      {tl.length===0&&<div style={{color:"#ccc",fontSize:12,textAlign:"center"}}>—</div>}
+                    </div>
+
+                    {/* Brainstorm preview */}
+                    <SectionHead title="Brain Storm" view="brainstorm" count={bubbles.length}/>
+                    {bubbles.length===0&&<div className="empty-state">אין רעיונות עדיין</div>}
+                    {bubbles.length>0&&(
+                      <div style={{display:"flex",flexWrap:"wrap",gap:6,background:"white",borderRadius:14,padding:"14px",boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
+                        {bubbles.slice(0,4).map(b=>{
+                          const fill=b.type==="ai"?"#ede0ff":"#d6f0ff";
+                          const col=b.type==="ai"?"#7c5cb8":"#1a7a9a";
+                          return(
+                            <div key={b.id} style={{position:"relative",flexShrink:0}}>
+                              <svg width="100" height="62" viewBox="0 0 100 62">
+                                <g fill={fill}>
+                                  <rect x="8" y="32" width="84" height="26" rx="13"/>
+                                  <circle cx="26" cy="32" r="16"/>
+                                  <circle cx="46" cy="24" r="20"/>
+                                  <circle cx="68" cy="27" r="17"/>
+                                  <circle cx="84" cy="34" r="13"/>
+                                </g>
+                              </svg>
+                              <div style={{position:"absolute",top:"52%",left:"50%",transform:"translate(-50%,-50%)",fontSize:10,fontWeight:700,color:col,textAlign:"center",width:82,lineHeight:1.25,pointerEvents:"none"}}>{b.text}</div>
+                            </div>
+                          );
+                        })}
+                        {bubbles.length>4&&<div style={{fontSize:12,color:"#bbb",alignSelf:"center",paddingRight:4}}>+{bubbles.length-4}</div>}
+                      </div>
+                    )}
+
+                    {/* Board preview */}
+                    <SectionHead title="לוח השראה" view="board" count={board.length}/>
+                    {board.length===0&&<div className="empty-state">אין פריטים עדיין</div>}
+                    {board.length>0&&(
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                        {board.slice(0,2).map(item=>(
+                          <div key={item.id} style={{background:"white",borderRadius:12,padding:"12px",boxShadow:"0 1px 6px rgba(0,0,0,0.06)",minHeight:70,fontSize:12,color:"#555",lineHeight:1.5}}>{item.text}</div>
+                        ))}
+                        {board.length>2&&<div style={{background:"#f8f8fc",borderRadius:12,padding:"12px",fontSize:12,color:"#bbb",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} onClick={()=>setProjectView("board")}>+{board.length-2} עוד</div>}
+                      </div>
+                    )}
+                  </>);
+                })()}
 
                 {/* TASKS view */}
                 {projectView==="tasks"&&(<>
@@ -1101,17 +1184,25 @@ export default function App() {
                       <span style={{display:"inline-block",background:`${accent}18`,color:accent,borderRadius:100,padding:"6px 18px",fontWeight:700,fontSize:15}}>{openProject.name}</span>
                     </div>
                     {/* Bubbles */}
-                    <div style={{display:"flex",flexWrap:"wrap",gap:10,justifyContent:"center"}}>
-                      {(openProject.bubbles||[]).map(b=>(
-                        <div key={b.id} style={{position:"relative",cursor:"default"}} onClick={()=>deleteBubble(openProject.id,b.id)}>
-                          <svg width="110" height="72" viewBox="0 0 110 72">
-                            <ellipse cx="55" cy="38" rx="50" ry="28" fill={b.type==="ai"?"#f0eaff":b.type==="central"?"#e8f4f0":"#daeef8"}/>
-                            <ellipse cx="20" cy="15" rx="14" ry="10" fill={b.type==="ai"?"#f0eaff":b.type==="central"?"#e8f4f0":"#daeef8"}/>
-                            <ellipse cx="90" cy="12" rx="10" ry="7" fill={b.type==="ai"?"#f0eaff":b.type==="central"?"#e8f4f0":"#daeef8"}/>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:12,justifyContent:"center"}}>
+                      {(openProject.bubbles||[]).map(b=>{
+                        const fill=b.type==="ai"?"#ede0ff":"#d6f0ff";
+                        const col=b.type==="ai"?"#7c5cb8":"#1a7a9a";
+                        return(
+                        <div key={b.id} style={{position:"relative",cursor:"pointer",flexShrink:0}} title="לחצי למחיקה" onClick={()=>deleteBubble(openProject.id,b.id)}>
+                          <svg width="130" height="80" viewBox="0 0 130 80">
+                            <g fill={fill}>
+                              <rect x="10" y="40" width="110" height="32" rx="16"/>
+                              <circle cx="32" cy="40" r="22"/>
+                              <circle cx="56" cy="30" r="26"/>
+                              <circle cx="83" cy="33" r="22"/>
+                              <circle cx="104" cy="42" r="18"/>
+                            </g>
                           </svg>
-                          <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-40%)",fontSize:11,fontWeight:600,color:b.type==="ai"?"#8b74c9":"#2d7a5a",textAlign:"center",width:90,lineHeight:1.3}}>{b.text}</div>
+                          <div style={{position:"absolute",top:"55%",left:"50%",transform:"translate(-50%,-50%)",fontSize:11,fontWeight:700,color:col,textAlign:"center",width:108,lineHeight:1.3,pointerEvents:"none"}}>{b.text}</div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                     {(openProject.bubbles||[]).length===0&&<div style={{color:"#ccc",textAlign:"center",fontSize:13,marginTop:40}}>הוסיפי רעיונות למטה</div>}
                   </div>
