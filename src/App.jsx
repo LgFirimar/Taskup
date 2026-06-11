@@ -89,6 +89,12 @@ export default function App() {
   const [newListName,setNewListName] = useState("");
   const [showNewListInput,setShowNewListInput] = useState(false);
   const [parsingList,setParsingList] = useState(false);
+  const [editingShoppingItem,setEditingShoppingItem] = useState(null); // {listId,itemId,text}
+
+  // ── Reminder alerts ───────────────────────────────────────────────────────
+  const [alertReminders,setAlertReminders] = useState([]);
+  const [showAlertModal,setShowAlertModal] = useState(false);
+  const [reminderAlertDate,setReminderAlertDate] = useState("");
 
   const profileMenuRef = useRef(null);
   const settingsMenuRef = useRef(null);
@@ -104,6 +110,24 @@ export default function App() {
     };
     document.addEventListener("mousedown",h);
     return ()=>document.removeEventListener("mousedown",h);
+  },[]);
+
+  // ── Reminder alert on open ────────────────────────────────────────────────
+  useEffect(()=>{
+    const d=loadStorage(); if(!d.profiles) return;
+    const todayStr=new Date().toISOString().split("T")[0];
+    const alerting=[];
+    Object.values(d.profiles).forEach(p=>{
+      (p.tabs||[]).forEach(t=>{
+        const check=(reminders)=>reminders.forEach(r=>{
+          if(r.done||!r.alertDate) return;
+          if(r.alertDate<=todayStr) alerting.push(r);
+        });
+        check(t.reminders||[]);
+        (t.subtabs||[]).forEach(s=>check(s.reminders||[]));
+      });
+    });
+    if(alerting.length){setAlertReminders(alerting);setShowAlertModal(true);}
   },[]);
 
   // ── Derived tabs ──────────────────────────────────────────────────────────
@@ -147,6 +171,11 @@ export default function App() {
   const addShoppingItem = (lid,text)=>{ if(!text.trim())return; updateProfile(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id===lid?{...l,items:[...l.items,{id:uid(),text:text.trim()}]}:l)})); };
   const deleteShoppingItem = (lid,iid)=>updateProfile(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id===lid?{...l,items:l.items.filter(i=>i.id!==iid)}:l)}));
   const deleteShoppingList = (lid)=>{ updateProfile(p=>({...p,shopping:(p.shopping||[]).filter(l=>l.id!==lid)})); if(openListId===lid){setOpenListId(null);setOpenListType(null);} };
+  const editShoppingItem = (lid,iid,text)=>{ updateProfile(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id===lid?{...l,items:l.items.map(i=>i.id===iid?{...i,text}:i)}:l)})); setEditingShoppingItem(null); };
+  const shareShoppingList = (list)=>{
+    const text=`*רשימת קניות - ${list.name}* 🛒\n`+(list.items||[]).map(i=>`• ${i.text}`).join("\n");
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`,"_blank");
+  };
 
   const parseAndAddItems = async (listId,text) => {
     if(!text.trim())return;
@@ -248,8 +277,8 @@ export default function App() {
   const addTask = ()=>{ const text=taskInput.trim(); if(!text)return; updateCtx(c=>({...c,tasks:[...c.tasks,{id:uid(),text,done:false,createdAt:today(),subtasks:[],priority:null}]})); setTaskInput(""); };
   const addReminder = ()=>{
     const text=reminderInput.trim(); if(!text)return;
-    updateCtx(c=>({...c,reminders:[...c.reminders,{id:uid(),text,done:false,createdAt:today(),startDate:reminderStart||null,endDate:reminderEnd||null}]}));
-    setReminderInput(""); setReminderStart(""); setReminderEnd(""); setShowReminderDates(false);
+    updateCtx(c=>({...c,reminders:[...c.reminders,{id:uid(),text,done:false,createdAt:today(),startDate:reminderStart||null,endDate:reminderEnd||null,alertDate:reminderAlertDate||null}]}));
+    setReminderInput(""); setReminderStart(""); setReminderEnd(""); setReminderAlertDate(""); setShowReminderDates(false);
   };
 
   const toggleDone = (type,id)=>smartUpdateItem(type,id,i=>({...i,done:!i.done}));
@@ -452,6 +481,9 @@ export default function App() {
     .back-btn:hover{background:#f0f0ef;}
     .back-btn span{font-size:18px;line-height:1;}
     .back-btn small{font-size:12px;color:#888;}
+    .alert-modal{position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:300;direction:rtl;}
+    .alert-card{background:white;border-radius:16px;padding:28px 24px;width:min(420px,92vw);max-height:80vh;display:flex;flex-direction:column;gap:12px;box-shadow:0 12px 40px rgba(0,0,0,0.2);}
+    .alert-item{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:#fffbeb;border:1.5px solid #fcd34d;border-radius:10px;}
 
     @keyframes checkPop{0%{transform:scale(1)}30%{transform:scale(1.7)}65%{transform:scale(0.85)}85%{transform:scale(1.1)}100%{transform:scale(1)}}
     @keyframes ringOut{0%{transform:scale(0.8);opacity:0.7}100%{transform:scale(2.6);opacity:0}}
@@ -490,6 +522,33 @@ export default function App() {
     <div dir="rtl" style={{minHeight:"100vh",background:"#fafaf8",fontFamily:"'Heebo',sans-serif",color:"#1a1a1a"}}>
       <style>{CSS}</style>
       <div style={{"--accent":accent}}>
+
+        {/* ── Reminder alert modal ── */}
+        {showAlertModal&&alertReminders.length>0&&(
+          <div className="alert-modal">
+            <div className="alert-card">
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:22}}>🔔</span>
+                <span style={{fontWeight:700,fontSize:17}}>תזכורות שממתינות לך</span>
+              </div>
+              <div style={{overflowY:"auto",flex:1,display:"flex",flexDirection:"column",gap:8}}>
+                {alertReminders.map((r,i)=>(
+                  <div key={i} className="alert-item">
+                    <span style={{fontSize:16,flexShrink:0}}>⚠️</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:600,fontSize:14}}>{r.text}</div>
+                      {r.startDate&&<div style={{fontSize:12,color:"#92400e",marginTop:2}}>מ-{formatDate(r.startDate)}{r.endDate?` עד ${formatDate(r.endDate)}`:""}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button onClick={()=>setShowAlertModal(false)}
+                style={{background:"#1a1a1a",color:"white",border:"none",borderRadius:10,padding:"11px 0",fontSize:15,fontWeight:600,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>
+                סגור
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Big celebrate */}
         {bigCelebrateId&&(
@@ -547,6 +606,9 @@ export default function App() {
                 <span>←</span><small>חזרה</small>
               </button>
               <span style={{fontWeight:700,fontSize:18,flex:1}}>{openList.name}</span>
+              {openListType==="shopping"&&(
+                <button onClick={()=>shareShoppingList(openList)} style={{background:"none",border:"none",fontSize:13,color:"#25d366",cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginLeft:8}}>💬 שתף</button>
+              )}
               <button onClick={()=>{if(openListType==="shopping")deleteShoppingList(openListId);else deleteNote(openListId);}} style={{background:"none",border:"none",fontSize:13,color:"#e07070",cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>מחק</button>
             </div>
 
@@ -565,7 +627,12 @@ export default function App() {
                 {(openList.items||[]).map(item=>(
                   <div key={item.id} className="list-item-row">
                     <span style={{width:7,height:7,borderRadius:"50%",background:accent,flexShrink:0}}/>
-                    <span style={{flex:1,fontSize:15,color:"#1a1a1a",lineHeight:1.5}}>{item.text}</span>
+                    {editingShoppingItem?.itemId===item.id
+                      ?<input autoFocus className="edit-inline" style={{flex:1,fontSize:15}} value={editingShoppingItem.text} onChange={e=>setEditingShoppingItem(p=>({...p,text:e.target.value}))}
+                          onKeyDown={e=>{if(e.key==="Enter")editShoppingItem(openListId,item.id,editingShoppingItem.text);if(e.key==="Escape")setEditingShoppingItem(null);}}/>
+                      :<span style={{flex:1,fontSize:15,color:"#1a1a1a",lineHeight:1.5}}>{item.text}</span>
+                    }
+                    <button onClick={()=>setEditingShoppingItem({listId:openListId,itemId:item.id,text:item.text})} style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}}>✎</button>
                     <button onClick={()=>deleteShoppingItem(openListId,item.id)} style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}}>✕</button>
                   </div>
                 ))}
@@ -745,6 +812,10 @@ export default function App() {
                         <label style={{fontSize:11,color:"#aaa",fontWeight:600}}>עד תאריך</label>
                         <input type="date" className="plain-input" style={{fontSize:13,padding:"6px 10px",colorScheme:"light"}} value={reminderEnd} min={reminderStart} onChange={e=>setReminderEnd(e.target.value)}/>
                       </div>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8,background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:8,padding:"8px 12px"}}>
+                      <span style={{fontSize:13,color:"#92400e",fontWeight:600,whiteSpace:"nowrap"}}>🔔 התרע מ-</span>
+                      <input type="date" className="plain-input" style={{flex:1,fontSize:13,padding:"6px 10px",colorScheme:"light"}} value={reminderAlertDate} onChange={e=>setReminderAlertDate(e.target.value)}/>
                     </div>
                   )}
                 </div>
