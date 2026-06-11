@@ -48,7 +48,7 @@ export default function SplashScreen({ onComplete }) {
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 500,
-      background: "#cde8dc",
+      background: "white",
       display: "flex", alignItems: "center", justifyContent: "center",
     }}>
       <video
@@ -72,7 +72,7 @@ export default function SplashScreen({ onComplete }) {
           <img
             src="/icon.png"
             alt="TaskUp"
-            style={{ width: 110, height: 110, borderRadius: 26, boxShadow: "0 8px 32px rgba(0,0,0,0.12)" }}
+            style={{ width: 120, height: 120 }}
           />
         </div>
       )}
