@@ -2,45 +2,53 @@ import { useEffect, useRef, useState } from "react";
 
 export default function SplashScreen({ onComplete }) {
   const videoRef = useRef(null);
+  const rafRef = useRef(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     const video = videoRef.current;
-    const fallback = setTimeout(onComplete, 6000);
+    const fallback = setTimeout(onComplete, 8000);
 
     if (!video) return () => clearTimeout(fallback);
 
-    const onLoaded = () => {
+    const start = () => {
       setReady(true);
-      video.play().catch(() => { clearTimeout(fallback); onComplete(); });
+      video.currentTime = video.duration;
+
+      // Play backwards — notes fly IN to the calendar
+      const fps = 30;
+      const step = 1 / fps;
+      const tick = () => {
+        if (!videoRef.current) return;
+        const v = videoRef.current;
+        const next = v.currentTime - step;
+        if (next <= 0) {
+          v.currentTime = 0;
+          clearTimeout(fallback);
+          setTimeout(onComplete, 400);
+          return;
+        }
+        v.currentTime = next;
+        rafRef.current = requestAnimationFrame(tick);
+      };
+      setTimeout(() => { rafRef.current = requestAnimationFrame(tick); }, 50);
     };
 
-    const onEnded = () => {
-      clearTimeout(fallback);
-      onComplete();
-    };
+    const onError = () => { clearTimeout(fallback); onComplete(); };
 
-    const onError = () => {
-      clearTimeout(fallback);
-      onComplete();
-    };
-
-    video.addEventListener("loadedmetadata", onLoaded, { once: true });
-    video.addEventListener("ended", onEnded, { once: true });
+    video.addEventListener("loadedmetadata", start, { once: true });
     video.addEventListener("error", onError, { once: true });
 
     return () => {
       clearTimeout(fallback);
-      video.removeEventListener("loadedmetadata", onLoaded);
-      video.removeEventListener("ended", onEnded);
-      video.removeEventListener("error", onError);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
   }, [onComplete]);
 
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 500,
-      background: "#b8e0d2",
+      background: "#cde8dc",
       display: "flex", alignItems: "center", justifyContent: "center",
     }}>
       <video
@@ -50,22 +58,21 @@ export default function SplashScreen({ onComplete }) {
         playsInline
         preload="auto"
         style={{
-          width: "100%", height: "100%",
-          objectFit: "cover",
+          width: "calc(100% - 48px)",
+          maxWidth: 420,
+          maxHeight: "calc(100vh - 80px)",
+          objectFit: "contain",
+          borderRadius: 24,
           opacity: ready ? 1 : 0,
           transition: "opacity 0.3s",
         }}
       />
       {!ready && (
-        <div style={{
-          position: "absolute", inset: 0,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          background: "#b8e0d2",
-        }}>
+        <div style={{ position: "absolute", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <img
             src="/icon.png"
             alt="TaskUp"
-            style={{ width: 120, height: 120, borderRadius: 28, boxShadow: "0 8px 32px rgba(0,0,0,0.15)" }}
+            style={{ width: 110, height: 110, borderRadius: 26, boxShadow: "0 8px 32px rgba(0,0,0,0.12)" }}
           />
         </div>
       )}
