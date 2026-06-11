@@ -2,47 +2,38 @@ import { useEffect, useRef, useState } from "react";
 
 export default function SplashScreen({ onComplete }) {
   const videoRef = useRef(null);
-  const rafRef = useRef(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     const video = videoRef.current;
-
-    // Fallback: if video doesn't load within 800ms, skip splash
-    const fallback = setTimeout(onComplete, 800);
+    const fallback = setTimeout(onComplete, 6000);
 
     if (!video) return () => clearTimeout(fallback);
 
-    const start = () => {
-      clearTimeout(fallback);
+    const onLoaded = () => {
       setReady(true);
-      video.currentTime = video.duration;
-
-      const fps = 30;
-      const step = 1 / fps;
-
-      const tick = () => {
-        if (!videoRef.current) return;
-        const v = videoRef.current;
-        const next = v.currentTime - step;
-        if (next <= 0) {
-          v.currentTime = 0;
-          setTimeout(onComplete, 300);
-          return;
-        }
-        v.currentTime = next;
-        rafRef.current = requestAnimationFrame(tick);
-      };
-
-      setTimeout(() => { rafRef.current = requestAnimationFrame(tick); }, 50);
+      video.play().catch(() => { clearTimeout(fallback); onComplete(); });
     };
 
-    video.addEventListener("loadedmetadata", start, { once: true });
-    video.addEventListener("error", () => { clearTimeout(fallback); onComplete(); }, { once: true });
+    const onEnded = () => {
+      clearTimeout(fallback);
+      onComplete();
+    };
+
+    const onError = () => {
+      clearTimeout(fallback);
+      onComplete();
+    };
+
+    video.addEventListener("loadedmetadata", onLoaded, { once: true });
+    video.addEventListener("ended", onEnded, { once: true });
+    video.addEventListener("error", onError, { once: true });
 
     return () => {
       clearTimeout(fallback);
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      video.removeEventListener("loadedmetadata", onLoaded);
+      video.removeEventListener("ended", onEnded);
+      video.removeEventListener("error", onError);
     };
   }, [onComplete]);
 
@@ -51,7 +42,6 @@ export default function SplashScreen({ onComplete }) {
       position: "fixed", inset: 0, zIndex: 500,
       background: "#b8e0d2",
       display: "flex", alignItems: "center", justifyContent: "center",
-      flexDirection: "column", gap: 24,
     }}>
       <video
         ref={videoRef}
@@ -60,15 +50,23 @@ export default function SplashScreen({ onComplete }) {
         playsInline
         preload="auto"
         style={{
-          width: "min(340px, 85vw)",
-          borderRadius: 32,
+          width: "100%", height: "100%",
+          objectFit: "cover",
           opacity: ready ? 1 : 0,
           transition: "opacity 0.3s",
         }}
       />
       {!ready && (
-        <div style={{ width: 48, height: 48 }}>
-          <img src="/icon.svg" alt="" style={{ width: "100%", borderRadius: 12 }} />
+        <div style={{
+          position: "absolute", inset: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: "#b8e0d2",
+        }}>
+          <img
+            src="/icon.png"
+            alt="TaskUp"
+            style={{ width: 120, height: 120, borderRadius: 28, boxShadow: "0 8px 32px rgba(0,0,0,0.15)" }}
+          />
         </div>
       )}
     </div>

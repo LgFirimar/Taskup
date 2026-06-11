@@ -799,7 +799,7 @@ export default function App() {
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap');*{box-sizing:border-box;}`}</style>
         <div style={{background:"white",borderRadius:24,padding:36,width:360,boxShadow:"0 12px 48px rgba(100,100,160,0.16)"}}>
           <div style={{textAlign:"center",marginBottom:16}}>
-            <img src="/icon.svg" alt="" style={{width:72,borderRadius:18,boxShadow:"0 4px 16px rgba(100,100,160,0.2)"}}/>
+            <img src="/icon.png" alt="" style={{width:72,borderRadius:18,boxShadow:"0 4px 16px rgba(100,100,160,0.2)"}}/>
           </div>
           <div style={{fontSize:22,fontWeight:700,textAlign:"center",marginBottom:4,color:"#1a1a2e"}}>TaskUp</div>
           <div style={{fontSize:14,color:"#9090b0",textAlign:"center",marginBottom:28}}>{allProfiles.length>0?"בחרי פרופיל או צרי חדש":"ברוכה הבאה 👋"}</div>
