@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import SplashScreen from "./SplashScreen";
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 const STORAGE_KEY = "taskup_v1";
@@ -35,6 +36,8 @@ const getDaysUntil = (s) => {
 const loadStorage = () => { try{return JSON.parse(localStorage.getItem(STORAGE_KEY))||{};}catch{return{};} };
 
 export default function App() {
+  const [showSplash,setShowSplash] = useState(()=>!sessionStorage.getItem("splashDone"));
+
   // ── Profiles ───────────────────────────────────────────────────────────────
   const [profiles,setProfiles] = useState(()=>loadStorage().profiles||{});
   const [activeProfileId,setActiveProfileId] = useState(()=>{
@@ -71,6 +74,7 @@ export default function App() {
   const [showReminderDates,setShowReminderDates] = useState(false);
   const [editId,setEditId] = useState(null);
   const [editText,setEditText] = useState("");
+  const [editAlertDate,setEditAlertDate] = useState("");
 
   // ── Features ──────────────────────────────────────────────────────────────
   const [completingId,setCompletingId] = useState(null);
@@ -89,12 +93,37 @@ export default function App() {
   const [newListName,setNewListName] = useState("");
   const [showNewListInput,setShowNewListInput] = useState(false);
   const [parsingList,setParsingList] = useState(false);
-  const [editingShoppingItem,setEditingShoppingItem] = useState(null); // {listId,itemId,text}
+  const [editingShoppingItem,setEditingShoppingItem] = useState(null);
+
+  // ── Projects ──────────────────────────────────────────────────────────────
+  const [showProjects,setShowProjects] = useState(false);
+  const [openProjectId,setOpenProjectId] = useState(null);
+  const [projectView,setProjectView] = useState("tasks"); // tasks|timeline|brainstorm|board
+  const [newProjectName,setNewProjectName] = useState("");
+  const [showNewProject,setShowNewProject] = useState(false);
+  const [newProjTaskInput,setNewProjTaskInput] = useState("");
+  const [newProjSubtaskInput,setNewProjSubtaskInput] = useState({});
+  const [expandedProjTask,setExpandedProjTask] = useState(null);
+  const [newTimelineItem,setNewTimelineItem] = useState({text:"",date:""});
+  const [showNewTimeline,setShowNewTimeline] = useState(false);
+  const [newBubbleText,setNewBubbleText] = useState("");
+  const [aiThinkingProj,setAiThinkingProj] = useState(false);
+  const [newBoardText,setNewBoardText] = useState("");
+  const [aiBreakingProj,setAiBreakingProj] = useState(null);
 
   // ── Reminder alerts ───────────────────────────────────────────────────────
   const [alertReminders,setAlertReminders] = useState([]);
   const [showAlertModal,setShowAlertModal] = useState(false);
   const [reminderAlertDate,setReminderAlertDate] = useState("");
+
+  // ── Voice control ─────────────────────────────────────────────────────────
+  const [voiceState,setVoiceState] = useState("off"); // "off"|"idle"|"listening"|"processing"
+  const [voiceLabel,setVoiceLabel] = useState("");
+  const voiceModeRef = useRef("idle");
+  const recognitionRef = useRef(null);
+  const openListIdRef = useRef(null);
+  const openListTypeRef = useRef(null);
+  const profilesRef = useRef(null);
 
   const profileMenuRef = useRef(null);
   const settingsMenuRef = useRef(null);
@@ -128,6 +157,88 @@ export default function App() {
       });
     });
     if(alerting.length){setAlertReminders(alerting);setShowAlertModal(true);}
+  },[]);
+
+  // keep refs in sync so voice callbacks have fresh values
+  useEffect(()=>{ openListIdRef.current=openListId; },[openListId]);
+  useEffect(()=>{ openListTypeRef.current=openListType; },[openListType]);
+  useEffect(()=>{ profilesRef.current=profiles; },[profiles]);
+
+  // ── Voice recognition setup ────────────────────────────────────────────────
+  useEffect(()=>{
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR) return;
+
+    const r=new SR();
+    r.lang="he-IL";
+    r.continuous=true;
+    r.interimResults=false;
+    recognitionRef.current=r;
+
+    const flash=(label,ms=2000)=>{ setVoiceLabel(label); setTimeout(()=>setVoiceLabel(""),ms); };
+
+    r.onresult=(e)=>{
+      const text=e.results[e.results.length-1][0].transcript.trim().toLowerCase();
+      if(text.includes("taskup")||text.includes("טאסק אפ")||text.includes("טסקאפ")){
+        voiceModeRef.current="listening";
+        setVoiceState("listening");
+        flash("מאזין להוראות...",4000);
+        setTimeout(()=>{ if(voiceModeRef.current==="listening"){ voiceModeRef.current="idle"; setVoiceState("idle"); }},5000);
+        return;
+      }
+      if(voiceModeRef.current!=="listening") return;
+      voiceModeRef.current="idle"; setVoiceState("idle");
+
+      // Navigation commands
+      if(text.includes("קניות")){ setShowListsMenu("shopping"); flash("🛒 קניות"); return; }
+      if(text.includes("פתקים")||text.includes("פתק")){ setShowListsMenu("notes"); flash("📝 פתקים"); return; }
+      if(text.includes("סגור")||text.includes("חזרה")){ setOpenListId(null); setOpenListType(null); setShowListsMenu(null); flash("סגור"); return; }
+
+      // Open specific list: "תכנס ל[name]"
+      const enterMatch=text.match(/(?:תכנס|פתח|עבור)\s+(?:ל)?(.+)/);
+      if(enterMatch){
+        const query=enterMatch[1].trim();
+        const p=profilesRef.current[Object.keys(profilesRef.current)[0]];
+        const allLists=[...(p?.shopping||[]).map(l=>({...l,type:"shopping"})),...(p?.notes||[]).map(l=>({...l,type:"notes"}))];
+        const found=allLists.find(l=>l.name.includes(query)||query.includes(l.name));
+        if(found){ setOpenListId(found.id); setOpenListType(found.type); setShowListsMenu(null); flash(`פותח: ${found.name}`); }
+        else flash(`לא נמצא: ${query}`,3000);
+        return;
+      }
+
+      // Add item: "תוסיף [item]"
+      const addMatch=text.match(/(?:תוסיף|הוסף|הוסיפי)\s+(.+)/);
+      if(addMatch&&openListIdRef.current&&openListTypeRef.current==="shopping"){
+        const item=addMatch[1].trim();
+        const lid=openListIdRef.current;
+        setProfiles(prev=>{
+          const pid=Object.keys(prev)[0];
+          return {...prev,[pid]:{...prev[pid],shopping:(prev[pid].shopping||[]).map(l=>l.id===lid?{...l,items:[...l.items,{id:uid(),text:item}]}:l)}};
+        });
+        flash(`נוסף: ${item}`);
+        return;
+      }
+
+      // Read list items: "הקרא" / "מה יש"
+      if((text.includes("הקרא")||text.includes("מה יש"))&&openListIdRef.current){
+        const pid=Object.keys(profilesRef.current)[0];
+        const list=(profilesRef.current[pid]?.shopping||[]).find(l=>l.id===openListIdRef.current);
+        if(list?.items?.length){
+          const utter=new SpeechSynthesisUtterance(list.items.map(i=>i.text).join(", "));
+          utter.lang="he-IL"; speechSynthesis.speak(utter);
+          flash(`קורא ${list.items.length} פריטים`);
+        }
+        return;
+      }
+
+      flash(`לא הבנתי: "${text}"`,3000);
+    };
+
+    r.onerror=()=>{};
+    r.onend=()=>{ try{ r.start(); }catch{} };
+
+    try{ r.start(); setVoiceState("idle"); }catch{}
+    return ()=>{ try{ r.stop(); }catch{} };
   },[]);
 
   // ── Derived tabs ──────────────────────────────────────────────────────────
@@ -199,6 +310,58 @@ export default function App() {
   const notesList = getProfile().notes||[];
   const addNote = (name)=>{ if(!name.trim())return; updateProfile(p=>({...p,notes:[...(p.notes||[]),{id:uid(),name:name.trim(),content:""}]})); };
   const deleteNote = (nid)=>{ updateProfile(p=>({...p,notes:(p.notes||[]).filter(n=>n.id!==nid)})); if(openListId===nid){setOpenListId(null);setOpenListType(null);} };
+
+  // ── Projects ──────────────────────────────────────────────────────────────
+  const projects = getProfile().projects||[];
+  const openProject = projects.find(p=>p.id===openProjectId)||null;
+
+  const addProject = (name)=>{ if(!name.trim())return; const id=uid(); updateProfile(p=>({...p,projects:[...(p.projects||[]),{id,name:name.trim(),tasks:[],timeline:[],bubbles:[],board:[]}]})); setOpenProjectId(id); setShowProjects(false); setProjectView("tasks"); };
+  const deleteProject = (pid)=>{ updateProfile(p=>({...p,projects:(p.projects||[]).filter(pj=>pj.id!==pid)})); if(openProjectId===pid){setOpenProjectId(null);} };
+
+  const updateProject = (pid,fn)=>updateProfile(p=>({...p,projects:(p.projects||[]).map(pj=>pj.id===pid?fn(pj):pj)}));
+
+  const addProjectTask = (pid,text)=>{ if(!text.trim())return; updateProject(pid,pj=>({...pj,tasks:[...pj.tasks,{id:uid(),text:text.trim(),done:false,subtasks:[]}]})); };
+  const toggleProjectTask = (pid,tid)=>updateProject(pid,pj=>({...pj,tasks:pj.tasks.map(t=>t.id===tid?{...t,done:!t.done}:t)}));
+  const deleteProjectTask = (pid,tid)=>updateProject(pid,pj=>({...pj,tasks:pj.tasks.filter(t=>t.id!==tid)}));
+  const addProjectSubtask = (pid,tid,text)=>{ if(!text.trim())return; updateProject(pid,pj=>({...pj,tasks:pj.tasks.map(t=>t.id===tid?{...t,subtasks:[...(t.subtasks||[]),{id:uid(),text:text.trim(),done:false}]}:t)})); };
+  const toggleProjectSubtask = (pid,tid,sid)=>updateProject(pid,pj=>({...pj,tasks:pj.tasks.map(t=>t.id===tid?{...t,subtasks:(t.subtasks||[]).map(s=>s.id===sid?{...s,done:!s.done}:s)}:t)}));
+  const deleteProjectSubtask = (pid,tid,sid)=>updateProject(pid,pj=>({...pj,tasks:pj.tasks.map(t=>t.id===tid?{...t,subtasks:(t.subtasks||[]).filter(s=>s.id!==sid)}:t)}));
+
+  const addTimelineItem = (pid,text,date)=>{ if(!text.trim())return; updateProject(pid,pj=>({...pj,timeline:[...(pj.timeline||[]),{id:uid(),text:text.trim(),date:date||""}].sort((a,b)=>a.date.localeCompare(b.date))})); };
+  const deleteTimelineItem = (pid,iid)=>updateProject(pid,pj=>({...pj,timeline:(pj.timeline||[]).filter(i=>i.id!==iid)}));
+
+  const addBubble = (pid,text,type="user")=>{ if(!text.trim())return; updateProject(pid,pj=>({...pj,bubbles:[...(pj.bubbles||[]),{id:uid(),text:text.trim(),type}]})); };
+  const deleteBubble = (pid,bid)=>updateProject(pid,pj=>({...pj,bubbles:(pj.bubbles||[]).filter(b=>b.id!==bid)}));
+
+  const addBoardItem = (pid,text)=>{ if(!text.trim())return; updateProject(pid,pj=>({...pj,board:[...(pj.board||[]),{id:uid(),text:text.trim()}]})); };
+  const deleteBoardItem = (pid,bid)=>updateProject(pid,pj=>({...pj,board:(pj.board||[]).filter(b=>b.id!==bid)}));
+
+  const aiThinkBubbles = async (pid,topic)=>{
+    setAiThinkingProj(true);
+    try{
+      const res=await fetch(`${WORKER_URL}/breakdown`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({task:`רעיונות לנושא: ${topic}`})});
+      if(!res.ok)throw new Error();
+      const{steps}=await res.json();
+      if(steps?.length) steps.forEach(s=>addBubble(pid,s,"ai"));
+    }catch{}
+    setAiThinkingProj(false);
+  };
+
+  const aiBreakProjectTask = async (pid,tid,text)=>{
+    setAiBreakingProj(tid);
+    try{
+      const res=await fetch(`${WORKER_URL}/breakdown`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({task:text})});
+      if(!res.ok)throw new Error();
+      const{steps}=await res.json();
+      if(steps?.length) steps.forEach(s=>addProjectSubtask(pid,tid,s));
+    }catch{}
+    setAiBreakingProj(null);
+  };
+
+  const getProjectProgress = (pj)=>{
+    const all=pj.tasks.length; if(!all) return 0;
+    return Math.round(pj.tasks.filter(t=>t.done).length/all*100);
+  };
 
   // ── Profile actions ────────────────────────────────────────────────────────
   const createProfile = ()=>{
@@ -283,7 +446,7 @@ export default function App() {
 
   const toggleDone = (type,id)=>smartUpdateItem(type,id,i=>({...i,done:!i.done}));
   const deleteItem = (type,id)=>smartDeleteItem(type,id);
-  const saveEdit = (type,id)=>{ smartUpdateItem(type,id,i=>({...i,text:editText})); setEditId(null); setEditText(""); };
+  const saveEdit = (type,id)=>{ smartUpdateItem(type,id,i=>({...i,text:editText,...(type==="reminder"?{alertDate:editAlertDate||null}:{})})); setEditId(null); setEditText(""); setEditAlertDate(""); };
   const cyclePriority = (id)=>smartUpdateItem("task",id,t=>({...t,priority:PRIO_CYCLE[(PRIO_CYCLE.indexOf(t.priority||null)+1)%4]}));
 
   const handleComplete = (type,id)=>{
@@ -365,26 +528,27 @@ export default function App() {
   // ── Task row renderer ─────────────────────────────────────────────────────
   const renderTaskRow = (item) => {
     const prioColor = item.priority?PRIO_COLOR[item.priority]:null;
+    const prioClass = item.priority?` prio-${item.priority}`:"";
     return (
-      <div key={item.id} className="task-row" style={{flexDirection:"column",gap:0}}>
-        <div style={{display:"flex",alignItems:"flex-start",gap:8,width:"100%"}}>
+      <div key={item.id} className={`task-row${prioClass}`} style={{flexDirection:"column",gap:0}}>
+        <div style={{display:"flex",alignItems:"flex-start",gap:10,width:"100%"}}>
           {/* Priority dot */}
-          <button className="prio-dot" style={{background:prioColor||"white",borderColor:prioColor||"#e0e0e0","--accent":accent}} title="הגדרי עדיפות"
+          <button className="prio-dot" style={{background:prioColor||"white",borderColor:prioColor||"#d8d7cf","--accent":accent}} title="הגדרי עדיפות"
             onClick={()=>cyclePriority(item.id)}/>
 
           <div style={{flex:1,minWidth:0}}>
             {editId===item.id
               ?<input autoFocus className="edit-inline" value={editText} onChange={e=>setEditText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")saveEdit("task",item.id);if(e.key==="Escape")setEditId(null);}}/>
-              :<span style={{fontSize:14,lineHeight:1.5}}>{item.text}</span>}
+              :<span style={{fontSize:14,lineHeight:1.55,color:"#222"}}>{item.text}</span>}
           </div>
 
-          <div style={{display:"flex",alignItems:"center",flexShrink:0}}>
+          <div style={{display:"flex",alignItems:"center",flexShrink:0,gap:2}}>
             <button className="icon-btn done-btn" style={{"--accent":accent}} title="סיימתי!" onClick={()=>handleBigComplete(item.id)}>✓</button>
-            <button className="icon-btn" style={{color:breakingDownId===item.id?"#ffa726":"#c9a96e",fontSize:14}} title="קטן עלי"
+            <button className="icon-btn" style={{color:breakingDownId===item.id?"#ffa726":"#d4a96e",fontSize:14}} title="קטן עלי"
               onClick={()=>breakdownTask(item.id,item.text)}>
-              {breakingDownId===item.id?<div className="spinner"/>:"✂"}
+              {breakingDownId===item.id?<div className="spinner" style={{borderTopColor:"#ffa726",borderColor:"#ffa72633"}}/>:"✂"}
             </button>
-            <button className="icon-btn" style={{fontSize:18}} onClick={()=>{setEditId(item.id);setEditText(item.text);}}>✎</button>
+            <button className="icon-btn" style={{fontSize:17}} onClick={()=>{setEditId(item.id);setEditText(item.text);}}>✎</button>
             <button className="icon-btn del" onClick={()=>deleteItem("task",item.id)}>✕</button>
           </div>
         </div>
@@ -423,103 +587,234 @@ export default function App() {
   };
 
   const CSS = `
-    @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&display=swap');
     *{box-sizing:border-box;}
-    ::-webkit-scrollbar{width:4px;height:4px;}::-webkit-scrollbar-thumb{background:#ddd;border-radius:4px;}
-    .tab-pill{display:flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;border:1.5px solid transparent;background:none;cursor:pointer;font-family:'Heebo',sans-serif;font-size:14px;font-weight:500;color:#888;white-space:nowrap;transition:all 0.18s;}
-    .tab-pill:hover{background:#f0f0ef;color:#333;}
-    .tab-pill.active{color:var(--accent);border-color:var(--accent);background:white;box-shadow:0 1px 6px rgba(0,0,0,0.07);}
-    .sub-chip{padding:4px 12px;border-radius:20px;border:1.5px solid #e0e0de;background:none;cursor:pointer;font-family:'Heebo',sans-serif;font-size:13px;color:#888;transition:all 0.15s;}
-    .sub-chip:hover{border-color:#bbb;color:#444;}
-    .sub-chip.active{border-color:var(--accent);color:var(--accent);background:white;font-weight:600;}
-    .plain-input{border:1.5px solid #e5e5e3;border-radius:8px;padding:9px 13px;font-family:'Heebo',sans-serif;font-size:14px;background:white;color:#1a1a1a;outline:none;direction:rtl;transition:border 0.15s;}
-    .plain-input:focus{border-color:var(--accent);}
-    .plain-input::placeholder{color:#bbb;}
-    .add-btn{border:none;border-radius:8px;background:var(--accent);color:white;font-family:'Heebo',sans-serif;font-size:15px;font-weight:600;padding:9px 18px;cursor:pointer;transition:opacity 0.15s;}
-    .add-btn:hover{opacity:0.85;}
-    .ghost-btn{border:1.5px dashed #d0d0ce;border-radius:8px;background:none;padding:7px 14px;font-family:'Heebo',sans-serif;font-size:13px;color:#aaa;cursor:pointer;transition:all 0.15s;}
+    body{background:#f5f6fa;min-height:100vh;}
+    ::-webkit-scrollbar{width:3px;height:3px;}
+    ::-webkit-scrollbar-thumb{background:#dde;border-radius:4px;}
+
+    /* ── Header ── */
+    .app-header{background:white;border-bottom:1px solid #eeeef5;padding:16px 20px 0;}
+    .greeting{font-size:22px;font-weight:800;color:#1a1a2e;letter-spacing:-0.02em;line-height:1.2;}
+    .greeting-date{font-size:13px;color:#aaa;font-weight:400;margin-top:2px;margin-bottom:14px;}
+    .search-bar{
+      width:100%;padding:10px 16px;border-radius:100px;
+      border:none;background:#f0f0f8;color:#555;
+      font-family:'Heebo',sans-serif;font-size:14px;outline:none;direction:rtl;
+      margin-bottom:14px;
+    }
+    .search-bar::placeholder{color:#bbb;}
+
+    /* ── Tabs ── */
+    .tab-bar{display:flex;align-items:center;gap:2px;overflow-x:auto;padding-bottom:14px;}
+    .tab-pill{
+      display:flex;align-items:center;gap:5px;
+      padding:6px 14px;border-radius:100px;border:none;
+      background:transparent;cursor:pointer;
+      font-family:'Heebo',sans-serif;font-size:13px;font-weight:500;
+      color:#aaa;white-space:nowrap;transition:all 0.18s;
+    }
+    .tab-pill:hover{background:#f4f4fb;color:#666;}
+    .tab-pill.active{color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,white);font-weight:700;}
+    .tab-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+
+    /* ── Category summary cards ── */
+    .cat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 20px 20px;}
+    .cat-card{border-radius:16px;padding:16px;cursor:pointer;transition:all 0.18s;}
+    .cat-card:hover{transform:translateY(-1px);filter:brightness(0.97);}
+    .cat-card-title{font-size:14px;font-weight:700;color:#1a1a2e;margin-bottom:3px;}
+    .cat-card-sub{font-size:12px;font-weight:400;color:#666;}
+
+    /* ── Sub-chips ── */
+    .sub-chip{
+      padding:5px 14px;border-radius:100px;
+      border:1.5px solid #e8e8f2;background:white;
+      cursor:pointer;font-family:'Heebo',sans-serif;font-size:12.5px;
+      color:#aaa;transition:all 0.15s;
+    }
+    .sub-chip:hover{border-color:#c8c8e8;color:#666;}
+    .sub-chip.active{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,white);font-weight:600;}
+
+    /* ── Inputs ── */
+    .plain-input{
+      border:1.5px solid #eeeef5;border-radius:12px;
+      padding:10px 14px;font-family:'Heebo',sans-serif;font-size:14px;
+      background:white;color:#1a1a2e;outline:none;direction:rtl;
+      transition:border 0.15s,box-shadow 0.15s;
+    }
+    .plain-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 10%,transparent);}
+    .plain-input::placeholder{color:#ccc;}
+
+    /* ── Buttons ── */
+    .add-btn{
+      border:none;border-radius:12px;background:var(--accent);color:white;
+      font-family:'Heebo',sans-serif;font-size:14px;font-weight:700;
+      padding:10px 20px;cursor:pointer;transition:all 0.15s;
+    }
+    .add-btn:hover{filter:brightness(1.07);transform:translateY(-1px);}
+    .add-btn:active{transform:translateY(0);}
+    .ghost-btn{
+      border:1.5px dashed #dde;border-radius:12px;background:none;
+      padding:7px 14px;font-family:'Heebo',sans-serif;font-size:12.5px;
+      color:#bbb;cursor:pointer;transition:all 0.15s;
+    }
     .ghost-btn:hover{border-color:var(--accent);color:var(--accent);}
-    .prio-dot{width:20px;height:20px;border-radius:50%;border:2px solid #e0e0e0;background:white;cursor:pointer;flex-shrink:0;transition:all 0.15s;padding:0;margin-top:1px;}
-    .prio-dot:hover{transform:scale(1.15);}
-    .task-row{display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border-radius:8px;border:1px solid #ebebea;background:white;margin-bottom:6px;transition:box-shadow 0.15s;position:relative;}
-    .task-row:hover{box-shadow:0 1px 6px rgba(0,0,0,0.06);}
-    .reminder-card{padding:12px 14px;border-radius:10px;border:1.5px solid #ebebea;background:white;margin-bottom:8px;transition:box-shadow 0.15s;}
-    .reminder-card:hover{box-shadow:0 2px 10px rgba(0,0,0,0.07);}
-    .reminder-card.active-r{border-color:var(--accent);background:#fafffe;}
-    .reminder-card.future-r{border-color:#c5cae9;}
-    .reminder-card.past-r{opacity:0.5;}
-    .date-range-bar{display:flex;align-items:center;gap:6px;font-size:12px;margin-top:5px;font-weight:500;flex-wrap:wrap;}
-    .date-chip{padding:2px 8px;border-radius:4px;font-size:12px;font-weight:500;}
-    .status-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
-    .icon-btn{background:none;border:none;cursor:pointer;color:#ccc;font-size:16px;padding:4px 6px;transition:color 0.15s;flex-shrink:0;line-height:1;min-width:28px;min-height:28px;display:flex;align-items:center;justify-content:center;}
-    .icon-btn:hover{color:#888;}
-    .icon-btn.del:hover{color:#e07070;}
-    .icon-btn.done-btn{color:#bbb;font-size:15px;font-weight:700;}
-    .icon-btn.done-btn:hover{color:var(--accent);}
-    .section-label{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#bbb;margin:20px 0 10px;}
-    .group-label{font-size:11px;font-weight:700;color:#aaa;margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid #f0f0ef;letter-spacing:0.05em;}
-    .edit-inline{border:1.5px solid var(--accent);border-radius:6px;padding:3px 8px;font-family:'Heebo',sans-serif;font-size:14px;outline:none;direction:rtl;background:white;color:#1a1a1a;width:100%;}
-    .days-badge{font-size:11px;padding:1px 7px;border-radius:12px;font-weight:600;}
-    .dropdown-menu{position:absolute;top:calc(100% + 6px);right:0;background:white;border:1px solid #ebebea;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,0.1);min-width:180px;z-index:100;overflow:hidden;}
-    .dropdown-item{display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;font-family:'Heebo',sans-serif;font-size:13px;color:#333;background:none;border:none;width:100%;text-align:right;transition:background 0.12s;}
-    .dropdown-item:hover{background:#f5f5f4;}
+
+    /* ── Priority dot ── */
+    .prio-dot{
+      width:16px;height:16px;border-radius:50%;
+      border:2px solid #dde;background:white;
+      cursor:pointer;flex-shrink:0;transition:all 0.2s;padding:0;margin-top:3px;
+    }
+    .prio-dot:hover{transform:scale(1.2);}
+
+    /* ── Task rows — left accent border ── */
+    .task-row{
+      display:flex;align-items:flex-start;gap:10px;
+      padding:12px 14px 12px 18px;
+      background:white;margin-bottom:6px;
+      transition:box-shadow 0.15s;position:relative;
+      border-right:3px solid var(--accent);
+    }
+    .task-row:first-child{border-radius:14px 14px 0 0;border-right:3px solid var(--accent);}
+    .task-row:last-child{border-radius:0 0 14px 14px;}
+    .task-row:only-child{border-radius:14px;}
+    .task-row.prio-green{border-right-color:#4caf50;}
+    .task-row.prio-yellow{border-right-color:#ffa726;}
+    .task-row.prio-red{border-right-color:#ef5350;}
+    .task-row:hover{box-shadow:0 2px 12px rgba(0,0,0,0.08);}
+    .task-group-wrap{background:white;border-radius:14px;overflow:hidden;margin-bottom:8px;box-shadow:0 1px 6px rgba(0,0,0,0.06);}
+
+    /* ── Reminder cards ── */
+    .reminder-card{
+      padding:13px 16px 13px 20px;
+      background:white;margin-bottom:6px;
+      transition:box-shadow 0.15s;
+      border-right:3px solid #c8d8f0;
+    }
+    .reminder-card:first-child{border-radius:14px 14px 0 0;}
+    .reminder-card:last-child{border-radius:0 0 14px 14px;}
+    .reminder-card:only-child{border-radius:14px;}
+    .reminder-group-wrap{background:white;border-radius:14px;overflow:hidden;margin-bottom:8px;box-shadow:0 1px 6px rgba(0,0,0,0.06);}
+    .reminder-card.active-r{border-right-color:var(--accent);background:color-mix(in srgb,var(--accent) 3%,white);}
+    .reminder-card.future-r{border-right-color:#9c9cdf;}
+    .reminder-card.past-r{opacity:0.4;}
+    .reminder-card:hover{box-shadow:0 2px 12px rgba(0,0,0,0.08);}
+
+    /* ── Date chips ── */
+    .date-range-bar{display:flex;align-items:center;gap:5px;font-size:11px;margin-top:6px;flex-wrap:wrap;}
+    .date-chip{padding:2px 8px;border-radius:100px;font-size:10.5px;font-weight:600;}
+    .status-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0;}
+    .days-badge{font-size:10px;padding:2px 8px;border-radius:100px;font-weight:700;}
+
+    /* ── Icon buttons ── */
+    .icon-btn{
+      background:none;border:none;cursor:pointer;color:#ccc;font-size:15px;
+      padding:3px 5px;transition:color 0.12s;flex-shrink:0;line-height:1;
+      min-width:26px;min-height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;
+    }
+    .icon-btn:hover{color:#8888aa;background:rgba(100,100,160,0.06);}
+    .icon-btn.del:hover{color:#e08080;background:rgba(220,80,80,0.06);}
+    .icon-btn.done-btn{
+      color:transparent;width:26px;height:26px;border-radius:50%;
+      border:2px solid #dde;background:white;transition:all 0.18s;font-size:13px;font-weight:700;
+    }
+    .icon-btn.done-btn:hover{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,white);}
+
+    /* ── Labels ── */
+    .section-label{font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#c8c8d8;margin:20px 0 8px;}
+    .group-label{font-size:10px;font-weight:700;color:#c0c0d8;margin:16px 0 7px;padding-bottom:5px;border-bottom:1px solid #eeeef5;letter-spacing:0.08em;text-transform:uppercase;}
+    .col-header{font-size:15px;font-weight:800;color:#1a1a2e;}
+
+    /* ── Inline edit ── */
+    .edit-inline{border:1.5px solid var(--accent);border-radius:8px;padding:4px 10px;font-family:'Heebo',sans-serif;font-size:14px;outline:none;direction:rtl;background:white;color:#1a1a2e;width:100%;}
+
+    /* ── Dropdowns ── */
+    .dropdown-menu{position:absolute;top:calc(100% + 8px);right:0;background:white;border:1px solid #eeeef5;border-radius:14px;box-shadow:0 8px 32px rgba(100,100,160,0.14);min-width:190px;z-index:100;overflow:hidden;}
+    .dropdown-item{display:flex;align-items:center;gap:9px;padding:11px 16px;cursor:pointer;font-family:'Heebo',sans-serif;font-size:13px;color:#3a3a5c;background:none;border:none;width:100%;text-align:right;transition:background 0.1s;}
+    .dropdown-item:hover{background:#f6f6fc;}
     .dropdown-item.danger{color:#e07070;}
     .dropdown-item.danger:hover{background:#fef2f2;}
-    .dropdown-divider{height:1px;background:#f0f0ef;margin:4px 0;}
-    .profile-avatar{width:26px;height:26px;border-radius:50%;background:#2d6a4f;color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;}
+    .dropdown-divider{height:1px;background:#f0f0f8;margin:4px 0;}
+    .profile-avatar{width:28px;height:28px;border-radius:50%;background:var(--accent);color:white;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;}
     .settings-dropdown{left:0;right:auto;}
-    .main-grid{display:grid;grid-template-columns:1fr 1fr;gap:32px;align-items:start;}
-    .subtask-row{display:flex;align-items:center;gap:8px;padding:4px 0;}
-    .subtask-check{width:16px;height:16px;border-radius:50%;border:1.5px solid #ddd;background:none;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:9px;transition:all 0.15s;}
+
+    /* ── Layout ── */
+    .main-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;}
+    .subtask-row{display:flex;align-items:center;gap:8px;padding:5px 0;}
+    .subtask-check{width:15px;height:15px;border-radius:4px;border:1.5px solid #dde;background:none;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:9px;transition:all 0.12s;}
     .subtask-check:hover{border-color:var(--accent);}
     .subtask-check.checked{border-color:var(--accent);background:var(--accent);color:white;}
-    .fab{position:fixed;bottom:24px;left:24px;width:52px;height:52px;border-radius:50%;border:none;color:white;font-size:26px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,0.22);z-index:150;display:flex;align-items:center;justify-content:center;transition:transform 0.15s,box-shadow 0.15s;}
-    .fab:hover{transform:scale(1.08);box-shadow:0 6px 20px rgba(0,0,0,0.28);}
-    .side-pill{position:fixed;left:24px;border-radius:24px;border:1.5px solid;padding:7px 14px 7px 10px;cursor:pointer;font-family:'Heebo',sans-serif;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;box-shadow:0 2px 8px rgba(0,0,0,0.1);z-index:150;transition:all 0.15s;}
-    .list-item-row{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid #f5f5f4;}
-    .back-btn{display:flex;align-items:center;gap:5px;background:none;border:none;cursor:pointer;color:#555;padding:4px 6px;border-radius:6px;font-family:'Heebo',sans-serif;transition:background 0.12s;}
-    .back-btn:hover{background:#f0f0ef;}
-    .back-btn span{font-size:18px;line-height:1;}
-    .back-btn small{font-size:12px;color:#888;}
-    .alert-modal{position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:300;direction:rtl;}
-    .alert-card{background:white;border-radius:16px;padding:28px 24px;width:min(420px,92vw);max-height:80vh;display:flex;flex-direction:column;gap:12px;box-shadow:0 12px 40px rgba(0,0,0,0.2);}
-    .alert-item{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:#fffbeb;border:1.5px solid #fcd34d;border-radius:10px;}
 
-    @keyframes checkPop{0%{transform:scale(1)}30%{transform:scale(1.7)}65%{transform:scale(0.85)}85%{transform:scale(1.1)}100%{transform:scale(1)}}
-    @keyframes ringOut{0%{transform:scale(0.8);opacity:0.7}100%{transform:scale(2.6);opacity:0}}
+    /* ── FAB & side pills ── */
+    .fab{position:fixed;bottom:26px;left:26px;width:52px;height:52px;border-radius:50%;border:none;color:white;font-size:26px;cursor:pointer;box-shadow:0 6px 20px color-mix(in srgb,var(--accent) 45%,transparent);z-index:150;display:flex;align-items:center;justify-content:center;transition:transform 0.15s;background:var(--accent);}
+    .fab:hover{transform:scale(1.08);}
+    .side-pill{position:fixed;left:26px;border-radius:100px;border:none;padding:8px 16px 8px 12px;cursor:pointer;font-family:'Heebo',sans-serif;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;box-shadow:0 3px 12px rgba(0,0,0,0.12);z-index:150;transition:all 0.15s;background:white;color:#555;}
+    .side-pill.active-pill{background:var(--accent);color:white;}
+    .side-pill:hover{transform:translateX(2px);}
+
+    /* ── Section header ── */
+    .section-header{display:flex;align-items:center;margin-bottom:12px;gap:8px;}
+    .section-count{background:var(--accent);color:white;border-radius:100px;font-size:11px;font-weight:700;padding:1px 7px;}
+
+    /* ── List detail ── */
+    .list-item-row{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid #f2f2f8;}
+    .back-btn{display:flex;align-items:center;gap:5px;background:none;border:none;cursor:pointer;color:#8888a0;padding:6px 10px;border-radius:10px;font-family:'Heebo',sans-serif;transition:all 0.12s;font-size:12px;font-weight:600;}
+    .back-btn:hover{background:#f0f0f8;color:#555;}
+    .back-btn svg{transition:transform 0.12s;}
+    .back-btn:hover svg{transform:translateX(2px);}
+
+    /* ── Alert modal ── */
+    .alert-modal{position:fixed;inset:0;background:rgba(20,20,40,0.5);display:flex;align-items:center;justify-content:center;z-index:300;direction:rtl;backdrop-filter:blur(6px);}
+    .alert-card{background:white;border-radius:20px;padding:28px 24px;width:min(420px,92vw);max-height:80vh;display:flex;flex-direction:column;gap:12px;box-shadow:0 20px 60px rgba(0,0,0,0.2);}
+    .alert-item{display:flex;align-items:flex-start;gap:10px;padding:11px 13px;background:#fffbeb;border:1.5px solid #fde68a;border-radius:12px;}
+
+    /* ── Empty states ── */
+    .empty-state{color:#ccc;font-size:13px;text-align:center;padding:24px;border:1.5px dashed #e8e8f2;border-radius:12px;background:white;}
+
+    /* ── Animations ── */
+    @keyframes ringOut{0%{transform:scale(0.8);opacity:0.6}100%{transform:scale(3);opacity:0}}
     @keyframes bigFly{0%{transform:translate(0,0) scale(1.4);opacity:1}100%{transform:translate(var(--dx),var(--dy)) scale(0);opacity:0}}
     @keyframes spin{to{transform:rotate(360deg)}}
-    .ring{position:absolute;top:10px;right:12px;width:20px;height:20px;border-radius:50%;border:2px solid var(--accent);animation:ringOut 0.55s ease-out forwards;pointer-events:none;}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+    .ring{position:absolute;top:10px;right:12px;width:20px;height:20px;border-radius:50%;border:2px solid var(--accent);animation:ringOut 0.6s ease-out forwards;pointer-events:none;}
     .big-emoji{position:absolute;font-size:22px;animation:bigFly 0.9s ease-out forwards;pointer-events:none;z-index:10;}
-    .spinner{width:14px;height:14px;border:2px solid #eee;border-top-color:#999;border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;}
+    .spinner{width:14px;height:14px;border:2px solid #e8e8f8;border-top-color:#9090b8;border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;}
+    .animate-in{animation:fadeIn 0.25s ease both;}
 
-    @media(max-width:640px){
-      .main-grid{grid-template-columns:1fr;gap:24px;}
-      .dropdown-menu{max-width:calc(100vw - 24px);}
-    }
+    @media(max-width:640px){.main-grid{grid-template-columns:1fr;gap:16px;}.dropdown-menu{max-width:calc(100vw - 24px);}}
+    @media screen and (-webkit-min-device-pixel-ratio:0){input,textarea,select{font-size:max(16px,1em) !important;}}
+    @keyframes voicePulse{0%,100%{box-shadow:0 0 0 4px rgba(239,83,80,0.25)}50%{box-shadow:0 0 0 10px rgba(239,83,80,0.08)}}
   `;
+
+  // ── Splash ─────────────────────────────────────────────────────────────────
+  if (showSplash) {
+    return <SplashScreen onComplete={()=>{sessionStorage.setItem("splashDone","1");setShowSplash(false);}}/>;
+  }
 
   // ── Profile modal ──────────────────────────────────────────────────────────
   if (showProfileModal) {
     return (
-      <div dir="rtl" style={{minHeight:"100vh",background:"#fafaf8",fontFamily:"'Heebo',sans-serif",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(135deg,#e8f5f0 0%,#eee8f8 100%)",fontFamily:"'Heebo',sans-serif",display:"flex",alignItems:"center",justifyContent:"center"}}>
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap');*{box-sizing:border-box;}`}</style>
-        <div style={{background:"white",borderRadius:16,padding:32,width:360,boxShadow:"0 8px 32px rgba(0,0,0,0.1)"}}>
-          <div style={{fontSize:36,textAlign:"center",marginBottom:8}}>📋</div>
-          <div style={{fontSize:22,fontWeight:700,textAlign:"center",marginBottom:4}}>TaskUp</div>
-          <div style={{fontSize:14,color:"#999",textAlign:"center",marginBottom:24}}>{allProfiles.length>0?"בחרי פרופיל או צרי חדש":"ברוכה הבאה! צרי את הפרופיל שלך"}</div>
-          {allProfiles.length>0&&<div style={{marginBottom:20}}>{allProfiles.map(p=>(<button key={p.id} onClick={()=>{setActiveProfileId(p.id);setActiveTab(null);setActiveSubtab(null);setShowProfileModal(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:10,border:"1.5px solid #e5e5e3",background:"white",cursor:"pointer",marginBottom:8,fontFamily:"'Heebo',sans-serif",fontSize:15,fontWeight:500,color:"#1a1a1a"}}><span style={{width:32,height:32,borderRadius:"50%",background:"#2d6a4f",color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700}}>{p.name.charAt(0)}</span>{p.name}</button>))}<div style={{borderTop:"1px solid #f0f0f0",margin:"16px 0 14px"}}/></div>}
-          <div style={{fontSize:13,fontWeight:600,color:"#888",marginBottom:8}}>{allProfiles.length>0?"פרופיל חדש":"שם הפרופיל"}</div>
-          <input autoFocus style={{width:"100%",border:"1.5px solid #e5e5e3",borderRadius:8,padding:"10px 13px",fontFamily:"'Heebo',sans-serif",fontSize:15,outline:"none",direction:"rtl",marginBottom:12,color:"#1a1a1a"}} placeholder="שם הפרופיל" value={newProfileName} onChange={e=>setNewProfileName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&createProfile()}/>
-          <button onClick={createProfile} style={{width:"100%",background:"#2d6a4f",color:"white",border:"none",borderRadius:8,padding:"11px 0",fontSize:15,fontWeight:600,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:allProfiles.length>0?8:0}}>{allProfiles.length>0?"צרי פרופיל":"התחלי"}</button>
-          {allProfiles.length>0&&<button onClick={()=>setShowProfileModal(false)} style={{width:"100%",background:"none",color:"#aaa",border:"none",padding:"8px 0",fontSize:14,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>ביטול</button>}
+        <div style={{background:"white",borderRadius:24,padding:36,width:360,boxShadow:"0 12px 48px rgba(100,100,160,0.16)"}}>
+          <div style={{textAlign:"center",marginBottom:16}}>
+            <img src="/icon.svg" alt="" style={{width:72,borderRadius:18,boxShadow:"0 4px 16px rgba(100,100,160,0.2)"}}/>
+          </div>
+          <div style={{fontSize:22,fontWeight:700,textAlign:"center",marginBottom:4,color:"#1a1a2e"}}>TaskUp</div>
+          <div style={{fontSize:14,color:"#9090b0",textAlign:"center",marginBottom:28}}>{allProfiles.length>0?"בחרי פרופיל או צרי חדש":"ברוכה הבאה 👋"}</div>
+          {allProfiles.length>0&&<div style={{marginBottom:20}}>{allProfiles.map(p=>(<button key={p.id} onClick={()=>{setActiveProfileId(p.id);setActiveTab(null);setActiveSubtab(null);setShowProfileModal(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",borderRadius:14,border:"1.5px solid #ededf5",background:"white",cursor:"pointer",marginBottom:8,fontFamily:"'Heebo',sans-serif",fontSize:15,fontWeight:500,color:"#1a1a2e",transition:"all 0.15s"}}><span style={{width:34,height:34,borderRadius:"50%",background:"#7bc4a4",color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700}}>{p.name.charAt(0)}</span>{p.name}</button>))}<div style={{borderTop:"1px solid #f0f0f8",margin:"16px 0 14px"}}/></div>}
+          <div style={{fontSize:12,fontWeight:700,color:"#b0b0cc",marginBottom:8,textTransform:"uppercase",letterSpacing:"0.08em"}}>{allProfiles.length>0?"פרופיל חדש":"שם הפרופיל"}</div>
+          <input autoFocus className="plain-input" style={{width:"100%",marginBottom:14,fontSize:15,"--accent":"#7bc4a4"}} placeholder="שם הפרופיל" value={newProfileName} onChange={e=>setNewProfileName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&createProfile()}/>
+          <button onClick={createProfile} style={{width:"100%",background:"#7bc4a4",color:"white",border:"none",borderRadius:14,padding:"13px 0",fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:allProfiles.length>0?8:0,boxShadow:"0 4px 14px rgba(123,196,164,0.4)"}}>{allProfiles.length>0?"צרי פרופיל":"התחלי"}</button>
+          {allProfiles.length>0&&<button onClick={()=>setShowProfileModal(false)} style={{width:"100%",background:"none",color:"#b0b0cc",border:"none",padding:"8px 0",fontSize:14,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>ביטול</button>}
         </div>
       </div>
     );
   }
 
   return (
-    <div dir="rtl" style={{minHeight:"100vh",background:"#fafaf8",fontFamily:"'Heebo',sans-serif",color:"#1a1a1a"}}>
+    <div dir="rtl" style={{minHeight:"100vh",fontFamily:"'Heebo',sans-serif",color:"#1a1a1a"}}>
       <style>{CSS}</style>
       <div style={{"--accent":accent}}>
 
@@ -603,7 +898,11 @@ export default function App() {
           <div style={{position:"fixed",inset:0,background:"white",zIndex:200,direction:"rtl",display:"flex",flexDirection:"column"}}>
             <div style={{padding:"14px 20px",borderBottom:"1px solid #ebebea",display:"flex",alignItems:"center",gap:12,background:"white"}}>
               <button className="back-btn" onClick={()=>{setOpenListId(null);setOpenListType(null);setListItemInput("");}}>
-                <span>←</span><small>חזרה</small>
+                <svg width="22" height="16" viewBox="0 0 22 16" fill="none">
+                  <path d="M3 8H19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  <path d="M13 2L19 8L13 14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                חזרה
               </button>
               <span style={{fontWeight:700,fontSize:18,flex:1}}>{openList.name}</span>
               {openListType==="shopping"&&(
@@ -651,31 +950,242 @@ export default function App() {
           </div>
         )}
 
-        {/* Side pills */}
-        <button className="side-pill" style={{bottom:132,background:showListsMenu==="shopping"?accent:"white",color:showListsMenu==="shopping"?"white":"#555",borderColor:showListsMenu==="shopping"?accent:"#e5e5e3"}} onClick={()=>setShowListsMenu(showListsMenu==="shopping"?null:"shopping")}>🛒 קניות</button>
-        <button className="side-pill" style={{bottom:88,background:showListsMenu==="notes"?accent:"white",color:showListsMenu==="notes"?"white":"#555",borderColor:showListsMenu==="notes"?accent:"#e5e5e3"}} onClick={()=>setShowListsMenu(showListsMenu==="notes"?null:"notes")}>📝 פתקים</button>
-        <button className="fab" style={{background:accent}} onClick={()=>setShowQuickCapture(true)}>+</button>
-
-        {/* Header */}
-        <div style={{background:"white",borderBottom:"1px solid #ebebea",padding:"0 24px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,paddingTop:14,paddingBottom:4}}>
-            <span style={{fontSize:19,fontWeight:700,color:"#1a1a1a"}}>לוח המשימות</span>
-            <div ref={profileMenuRef} style={{position:"relative",marginRight:6}}>
-              <button onClick={()=>setShowProfileMenu(p=>!p)} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 10px 4px 8px",borderRadius:20,border:"1.5px solid #e5e5e3",background:"white",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:13,fontWeight:500,color:"#555"}}>
-                <span className="profile-avatar">{profiles[activeProfileId]?.name?.charAt(0)||"?"}</span>
-                {profiles[activeProfileId]?.name||""}
-                <span style={{fontSize:10,color:"#aaa"}}>▾</span>
+        {/* Projects overlay */}
+        {(showProjects||openProjectId)&&(
+          <div style={{position:"fixed",inset:0,background:"#f5f6fa",zIndex:200,direction:"rtl",display:"flex",flexDirection:"column",fontFamily:"'Heebo',sans-serif"}}>
+            {/* Projects header */}
+            <div style={{background:"white",borderBottom:"1px solid #eeeef5",padding:"14px 20px",display:"flex",alignItems:"center",gap:12}}>
+              <button className="back-btn" onClick={()=>{setOpenProjectId(null);setShowProjects(openProjectId?true:false);}}>
+                <svg width="22" height="16" viewBox="0 0 22 16" fill="none"><path d="M3 8H19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M13 2L19 8L13 14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                {openProjectId?"פרויקטים":"חזרה"}
               </button>
-              {showProfileMenu&&(
-                <div className="dropdown-menu">
-                  {allProfiles.map(p=>(<button key={p.id} className="dropdown-item" style={{fontWeight:p.id===activeProfileId?600:400,color:p.id===activeProfileId?"#2d6a4f":"#333"}} onClick={()=>switchProfile(p.id)}><span className="profile-avatar">{p.name.charAt(0)}</span>{p.name}{p.id===activeProfileId&&<span style={{marginRight:"auto",fontSize:12}}>✓</span>}</button>))}
-                  <div className="dropdown-divider"/>
-                  <button className="dropdown-item" onClick={()=>{setShowProfileMenu(false);setNewProfileName("");setShowProfileModal(true);}}>+ פרופיל חדש</button>
-                  <button className="dropdown-item danger" onClick={deleteCurrentProfile}>מחק פרופיל נוכחי</button>
-                </div>
+              <span style={{fontWeight:800,fontSize:17,flex:1,color:"#1a1a2e"}}>{openProject?openProject.name:"פרויקטים"}</span>
+              {openProject&&(
+                <div style={{fontSize:12,color:"#aaa",fontWeight:500}}>התקדמות {getProjectProgress(openProject)}%</div>
               )}
             </div>
-            <span style={{fontSize:12,color:"#bbb",marginRight:"auto"}}>{new Date().toLocaleDateString("he-IL",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</span>
+
+            {/* Progress bar for open project */}
+            {openProject&&(
+              <div style={{height:4,background:"#eeeef5"}}>
+                <div style={{height:"100%",background:accent,width:`${getProjectProgress(openProject)}%`,transition:"width 0.4s",borderRadius:"0 4px 4px 0"}}/>
+              </div>
+            )}
+
+            {/* Project list */}
+            {!openProjectId&&(
+              <div style={{flex:1,overflowY:"auto",padding:"20px"}}>
+                {projects.map(pj=>{
+                  const prog=getProjectProgress(pj);
+                  return (
+                    <div key={pj.id} style={{background:"white",borderRadius:16,padding:"16px 18px",marginBottom:10,boxShadow:"0 1px 6px rgba(0,0,0,0.06)",cursor:"pointer",borderRight:`4px solid ${accent}`}} onClick={()=>{setOpenProjectId(pj.id);setProjectView("tasks");}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                        <span style={{fontWeight:700,fontSize:15,color:"#1a1a2e"}}>{pj.name}</span>
+                        <button onClick={e=>{e.stopPropagation();deleteProject(pj.id);}} style={{background:"none",border:"none",color:"#ddd",cursor:"pointer",fontSize:14}}>✕</button>
+                      </div>
+                      <div style={{marginTop:8,height:5,background:"#f0f0f8",borderRadius:10,overflow:"hidden"}}>
+                        <div style={{height:"100%",background:accent,width:`${prog}%`,borderRadius:10,transition:"width 0.4s"}}/>
+                      </div>
+                      <div style={{fontSize:11,color:"#bbb",marginTop:5}}>{pj.tasks.filter(t=>t.done).length}/{pj.tasks.length} משימות • {prog}%</div>
+                    </div>
+                  );
+                })}
+                {showNewProject?(
+                  <div style={{display:"flex",gap:8,marginTop:8}}>
+                    <input autoFocus className="plain-input" style={{flex:1}} placeholder="שם הפרויקט" value={newProjectName} onChange={e=>setNewProjectName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){addProject(newProjectName);setNewProjectName("");setShowNewProject(false);}if(e.key==="Escape")setShowNewProject(false);}}/>
+                    <button className="add-btn" onClick={()=>{addProject(newProjectName);setNewProjectName("");setShowNewProject(false);}}>צור</button>
+                  </div>
+                ):(
+                  <button className="ghost-btn" style={{width:"100%",marginTop:8}} onClick={()=>setShowNewProject(true)}>+ פרויקט חדש</button>
+                )}
+              </div>
+            )}
+
+            {/* Project detail */}
+            {openProject&&(<>
+              {/* View tabs */}
+              <div style={{display:"flex",gap:0,background:"white",borderBottom:"1px solid #eeeef5",padding:"0 20px"}}>
+                {[["tasks","משימות"],["timeline","לו״ז"],["brainstorm","Brain Storm"],["board","השראה"]].map(([v,label])=>(
+                  <button key={v} onClick={()=>setProjectView(v)} style={{padding:"11px 14px",border:"none",background:"none",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:13,fontWeight:projectView===v?700:400,color:projectView===v?accent:"#aaa",borderBottom:projectView===v?`2px solid ${accent}`:"2px solid transparent",transition:"all 0.15s"}}>{label}</button>
+                ))}
+              </div>
+
+              <div style={{flex:1,overflowY:"auto",padding:"20px"}}>
+
+                {/* TASKS view */}
+                {projectView==="tasks"&&(<>
+                  <div style={{display:"flex",gap:8,marginBottom:14}}>
+                    <input className="plain-input" style={{flex:1}} placeholder="משימה חדשה..." value={newProjTaskInput} onChange={e=>setNewProjTaskInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(addProjectTask(openProject.id,newProjTaskInput),setNewProjTaskInput(""))}/>
+                    <button className="add-btn" onClick={()=>{addProjectTask(openProject.id,newProjTaskInput);setNewProjTaskInput("");}}>+</button>
+                  </div>
+                  {openProject.tasks.map(task=>{
+                    const doneCount=(task.subtasks||[]).filter(s=>s.done).length;
+                    const totalSubs=(task.subtasks||[]).length;
+                    const subProg=totalSubs>0?Math.round(doneCount/totalSubs*100):0;
+                    return (
+                      <div key={task.id} style={{background:"white",borderRadius:14,marginBottom:8,overflow:"hidden",boxShadow:"0 1px 6px rgba(0,0,0,0.06)",borderRight:`3px solid ${task.done?"#4caf50":accent}`}}>
+                        <div style={{padding:"12px 14px",display:"flex",alignItems:"center",gap:10}}>
+                          <button onClick={()=>toggleProjectTask(openProject.id,task.id)} style={{width:20,height:20,borderRadius:4,border:`2px solid ${task.done?"#4caf50":"#dde"}`,background:task.done?"#4caf50":"white",color:"white",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,flexShrink:0}}>
+                            {task.done?"✓":""}
+                          </button>
+                          <span style={{flex:1,fontSize:14,color:task.done?"#bbb":"#1a1a2e",textDecoration:task.done?"line-through":"none",fontWeight:500}}>{task.text}</span>
+                          <button onClick={()=>aiBreakProjectTask(openProject.id,task.id,task.text)} style={{background:"none",border:"none",cursor:"pointer",color:aiBreakingProj===task.id?"#ffa726":"#dde",fontSize:13,fontFamily:"'Heebo',sans-serif",fontWeight:600}}>
+                            {aiBreakingProj===task.id?<div className="spinner"/>:"מה עושים?"}
+                          </button>
+                          <button onClick={()=>setExpandedProjTask(expandedProjTask===task.id?null:task.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#dde",fontSize:12}}>
+                            {expandedProjTask===task.id?"▲":"▼"}
+                          </button>
+                          <button onClick={()=>deleteProjectTask(openProject.id,task.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#dde",fontSize:14}}>✕</button>
+                        </div>
+                        {totalSubs>0&&(
+                          <div style={{height:3,background:"#f0f0f8",margin:"0 14px 8px"}}>
+                            <div style={{height:"100%",background:"#4caf50",width:`${subProg}%`,borderRadius:3}}/>
+                          </div>
+                        )}
+                        {(expandedProjTask===task.id||(task.subtasks||[]).length>0)&&(
+                          <div style={{padding:"0 14px 12px 14px"}}>
+                            {(task.subtasks||[]).map(st=>(
+                              <div key={st.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderRight:`2px solid ${st.done?"#4caf50":"#e8e8f2"}`,paddingRight:10,marginRight:-10}}>
+                                <button onClick={()=>toggleProjectSubtask(openProject.id,task.id,st.id)} style={{width:14,height:14,borderRadius:3,border:`1.5px solid ${st.done?"#4caf50":"#dde"}`,background:st.done?"#4caf50":"white",color:"white",cursor:"pointer",fontSize:9,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                                  {st.done?"✓":""}
+                                </button>
+                                <span style={{flex:1,fontSize:13,color:st.done?"#bbb":"#555",textDecoration:st.done?"line-through":"none"}}>{st.text}</span>
+                                <button onClick={()=>deleteProjectSubtask(openProject.id,task.id,st.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#dde",fontSize:12}}>✕</button>
+                              </div>
+                            ))}
+                            {expandedProjTask===task.id&&(
+                              <div style={{display:"flex",gap:6,marginTop:6}}>
+                                <input autoFocus className="edit-inline" style={{fontSize:13}} placeholder="תת-משימה..." value={newProjSubtaskInput[task.id]||""} onChange={e=>setNewProjSubtaskInput(p=>({...p,[task.id]:e.target.value}))} onKeyDown={e=>{if(e.key==="Enter"){addProjectSubtask(openProject.id,task.id,newProjSubtaskInput[task.id]||"");setNewProjSubtaskInput(p=>({...p,[task.id]:""}));}if(e.key==="Escape")setExpandedProjTask(null);}}/>
+                                <button className="add-btn" style={{padding:"4px 10px",fontSize:13}} onClick={()=>{addProjectSubtask(openProject.id,task.id,newProjSubtaskInput[task.id]||"");setNewProjSubtaskInput(p=>({...p,[task.id]:""}));}}>+</button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {openProject.tasks.length===0&&<div className="empty-state">אין משימות עדיין</div>}
+                </>)}
+
+                {/* TIMELINE view */}
+                {projectView==="timeline"&&(<>
+                  <div style={{marginBottom:16}}>
+                    {(openProject.timeline||[]).map((item,i)=>(
+                      <div key={item.id} style={{display:"flex",alignItems:"flex-start",gap:14,marginBottom:16,paddingRight:8,position:"relative"}}>
+                        <div style={{position:"absolute",right:0,top:6,bottom:-16,width:2,background:i<(openProject.timeline||[]).length-1?"#eeeef5":"transparent"}}/>
+                        <div style={{width:12,height:12,borderRadius:"50%",background:accent,flexShrink:0,marginTop:3,position:"relative",zIndex:1}}/>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:11,color:"#bbb",fontWeight:600,marginBottom:2}}>{item.date?new Date(item.date+"T00:00:00").toLocaleDateString("he-IL",{day:"numeric",month:"short"}):""}</div>
+                          <div style={{fontSize:14,color:"#1a1a2e",fontWeight:500}}>{item.text}</div>
+                        </div>
+                        <button onClick={()=>deleteTimelineItem(openProject.id,item.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#dde",fontSize:13}}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                  {showNewTimeline?(
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                      <input type="date" className="plain-input" style={{flex:"0 0 auto",fontSize:13,colorScheme:"light"}} value={newTimelineItem.date} onChange={e=>setNewTimelineItem(p=>({...p,date:e.target.value}))}/>
+                      <input autoFocus className="plain-input" style={{flex:1}} placeholder="אבן דרך..." value={newTimelineItem.text} onChange={e=>setNewTimelineItem(p=>({...p,text:e.target.value}))} onKeyDown={e=>{if(e.key==="Enter"){addTimelineItem(openProject.id,newTimelineItem.text,newTimelineItem.date);setNewTimelineItem({text:"",date:""});setShowNewTimeline(false);}if(e.key==="Escape")setShowNewTimeline(false);}}/>
+                      <button className="add-btn" onClick={()=>{addTimelineItem(openProject.id,newTimelineItem.text,newTimelineItem.date);setNewTimelineItem({text:"",date:""});setShowNewTimeline(false);}}>הוסף</button>
+                    </div>
+                  ):(
+                    <button className="ghost-btn" style={{width:"100%"}} onClick={()=>setShowNewTimeline(true)}>+ הוסף אבן דרך</button>
+                  )}
+                </>)}
+
+                {/* BRAINSTORM view */}
+                {projectView==="brainstorm"&&(<>
+                  <div style={{position:"relative",minHeight:320,background:"white",borderRadius:16,padding:"20px",boxShadow:"0 1px 6px rgba(0,0,0,0.06)",marginBottom:14,overflow:"auto"}}>
+                    {/* Central topic */}
+                    <div style={{textAlign:"center",marginBottom:20}}>
+                      <span style={{display:"inline-block",background:`${accent}18`,color:accent,borderRadius:100,padding:"6px 18px",fontWeight:700,fontSize:15}}>{openProject.name}</span>
+                    </div>
+                    {/* Bubbles */}
+                    <div style={{display:"flex",flexWrap:"wrap",gap:10,justifyContent:"center"}}>
+                      {(openProject.bubbles||[]).map(b=>(
+                        <div key={b.id} style={{position:"relative",cursor:"default"}} onClick={()=>deleteBubble(openProject.id,b.id)}>
+                          <svg width="110" height="72" viewBox="0 0 110 72">
+                            <ellipse cx="55" cy="38" rx="50" ry="28" fill={b.type==="ai"?"#f0eaff":b.type==="central"?"#e8f4f0":"#daeef8"}/>
+                            <ellipse cx="20" cy="15" rx="14" ry="10" fill={b.type==="ai"?"#f0eaff":b.type==="central"?"#e8f4f0":"#daeef8"}/>
+                            <ellipse cx="90" cy="12" rx="10" ry="7" fill={b.type==="ai"?"#f0eaff":b.type==="central"?"#e8f4f0":"#daeef8"}/>
+                          </svg>
+                          <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-40%)",fontSize:11,fontWeight:600,color:b.type==="ai"?"#8b74c9":"#2d7a5a",textAlign:"center",width:90,lineHeight:1.3}}>{b.text}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {(openProject.bubbles||[]).length===0&&<div style={{color:"#ccc",textAlign:"center",fontSize:13,marginTop:40}}>הוסיפי רעיונות למטה</div>}
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <input className="plain-input" style={{flex:1}} placeholder="רעיון חדש..." value={newBubbleText} onChange={e=>setNewBubbleText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){addBubble(openProject.id,newBubbleText,"user");setNewBubbleText("");}}}/>
+                    <button className="add-btn" onClick={()=>{addBubble(openProject.id,newBubbleText,"user");setNewBubbleText("");}}>+</button>
+                    <button onClick={()=>aiThinkBubbles(openProject.id,openProject.name)} style={{border:`1.5px solid ${accent}`,borderRadius:12,background:"white",color:accent,padding:"0 14px",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontWeight:700,fontSize:13,whiteSpace:"nowrap"}}>
+                      {aiThinkingProj?<div className="spinner" style={{borderTopColor:accent,borderColor:`${accent}33`}}/>:"מה אתה חושב? 🤖"}
+                    </button>
+                  </div>
+                </>)}
+
+                {/* BOARD view */}
+                {projectView==="board"&&(<>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+                    {(openProject.board||[]).map(item=>(
+                      <div key={item.id} style={{background:"white",borderRadius:14,padding:"14px",boxShadow:"0 1px 6px rgba(0,0,0,0.06)",minHeight:100,position:"relative",fontSize:13,color:"#555",lineHeight:1.5}}>
+                        {item.text}
+                        <button onClick={()=>deleteBoardItem(openProject.id,item.id)} style={{position:"absolute",top:8,left:8,background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:12}}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <input className="plain-input" style={{flex:1}} placeholder="הוסיפי השראה..." value={newBoardText} onChange={e=>setNewBoardText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){addBoardItem(openProject.id,newBoardText);setNewBoardText("");}}}/>
+                    <button className="add-btn" onClick={()=>{addBoardItem(openProject.id,newBoardText);setNewBoardText("");}}>+</button>
+                  </div>
+                </>)}
+
+              </div>
+            </>)}
+          </div>
+        )}
+
+        {/* Side pills */}
+        <button className={`side-pill${showListsMenu==="shopping"?" active-pill":""}`} style={{bottom:172}} onClick={()=>setShowListsMenu(showListsMenu==="shopping"?null:"shopping")}>🛒 קניות</button>
+        <button className={`side-pill${showListsMenu==="notes"?" active-pill":""}`} style={{bottom:128}} onClick={()=>setShowListsMenu(showListsMenu==="notes"?null:"notes")}>📝 פתקים</button>
+        <button className={`side-pill${(showProjects||openProjectId)?" active-pill":""}`} style={{bottom:84}} onClick={()=>{setShowProjects(true);setOpenProjectId(null);}}>🗂 פרויקטים</button>
+        <button className="fab" style={{background:accent}} onClick={()=>setShowQuickCapture(true)}>+</button>
+
+        {/* Voice indicator */}
+        {voiceState!=="off"&&(
+          <div style={{position:"fixed",bottom:90,right:20,zIndex:160,display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+            {voiceLabel&&<div style={{background:"rgba(0,0,0,0.75)",color:"white",fontSize:12,padding:"5px 12px",borderRadius:20,fontFamily:"'Heebo',sans-serif",direction:"rtl",whiteSpace:"nowrap",maxWidth:220,textAlign:"center"}}>{voiceLabel}</div>}
+            <div style={{width:42,height:42,borderRadius:"50%",background:voiceState==="listening"?"#ef5350":voiceState==="processing"?"#ffa726":"white",border:"2px solid "+(voiceState==="listening"?"#ef5350":voiceState==="processing"?"#ffa726":"#dde"),display:"flex",alignItems:"center",justifyContent:"center",boxShadow:voiceState==="listening"?"0 0 0 6px rgba(239,83,80,0.2)":"0 2px 8px rgba(0,0,0,0.1)",transition:"all 0.3s",animation:voiceState==="listening"?"voicePulse 1s ease-in-out infinite":"none"}}>
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <rect x="6" y="1" width="6" height="10" rx="3" fill={voiceState==="listening"?"white":"#aab"}/>
+                <path d="M3 9a6 6 0 0012 0" stroke={voiceState==="listening"?"white":"#aab"} strokeWidth="1.5" strokeLinecap="round"/>
+                <line x1="9" y1="15" x2="9" y2="17" stroke={voiceState==="listening"?"white":"#aab"} strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+            </div>
+          </div>
+        )}
+
+        {/* Header */}
+        <div className="app-header">
+          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",paddingBottom:10}}>
+            <div>
+              <div className="greeting">שלום, {profiles[activeProfileId]?.name||"👋"}</div>
+              <div className="greeting-date">{new Date().toLocaleDateString("he-IL",{weekday:"long",day:"numeric",month:"long"})}</div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4}}>
+              <div ref={profileMenuRef} style={{position:"relative"}}>
+                <button onClick={()=>setShowProfileMenu(p=>!p)} style={{display:"flex",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:"50%",border:"none",background:accent,cursor:"pointer",color:"white",fontFamily:"'Heebo',sans-serif",fontSize:15,fontWeight:700}}>
+                  {profiles[activeProfileId]?.name?.charAt(0)||"?"}
+                </button>
+                {showProfileMenu&&(
+                  <div className="dropdown-menu">
+                    {allProfiles.map(p=>(<button key={p.id} className="dropdown-item" style={{fontWeight:p.id===activeProfileId?600:400}} onClick={()=>switchProfile(p.id)}><span className="profile-avatar">{p.name.charAt(0)}</span>{p.name}{p.id===activeProfileId&&<span style={{marginRight:"auto",fontSize:12}}>✓</span>}</button>))}
+                    <div className="dropdown-divider"/>
+                    <button className="dropdown-item" onClick={()=>{setShowProfileMenu(false);setNewProfileName("");setShowProfileModal(true);}}>+ פרופיל חדש</button>
+                    <button className="dropdown-item danger" onClick={deleteCurrentProfile}>מחק פרופיל נוכחי</button>
+                  </div>
+                )}
+              </div>
             <div ref={settingsMenuRef} style={{position:"relative"}}>
               <button onClick={()=>setShowSettingsMenu(p=>!p)} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:"#aaa",padding:"4px 6px",borderRadius:6,lineHeight:1}}>⚙</button>
               {showSettingsMenu&&(
@@ -687,12 +1197,14 @@ export default function App() {
                 </div>
               )}
             </div>
+            </div>
           </div>
+          <input className="search-bar" placeholder="חיפוש משימות..." readOnly style={{cursor:"text"}}/>
 
-          <div style={{display:"flex",alignItems:"center",gap:4,overflowX:"auto",paddingBottom:12,paddingTop:8}}>
+          <div className="tab-bar">
             {tabs.map(t=>(
               <button key={t.id} className={`tab-pill${activeTab===t.id?" active":""}`} style={{"--accent":t.color}} onClick={()=>{setActiveTab(t.id);setActiveSubtab(null);}}>
-                <span style={{width:8,height:8,borderRadius:"50%",background:t.color,flexShrink:0}}/>{t.label}
+                <span className="tab-dot" style={{background:t.color}}/>{t.label}
                 {activeTab===t.id&&(<>
                   <span onClick={e=>{e.stopPropagation();setDefaultTab(t.id);}} style={{fontSize:12,cursor:"pointer",color:profiles[activeProfileId]?.defaultTab===t.id?"#f4a261":"#ddd",marginRight:-2,lineHeight:1}}>★</span>
                   <span className="icon-btn del" style={{fontSize:11,marginRight:-2,padding:0,minWidth:"unset",minHeight:"unset"}} onClick={e=>{e.stopPropagation();deleteTab(t.id);}}>✕</span>
@@ -719,10 +1231,24 @@ export default function App() {
           </div>
         )}
 
+        {/* Category summary cards */}
         {currentTab&&(
-          <div style={{padding:"20px 24px 100px"}}>
+          <div className="cat-grid">
+            <div className="cat-card" style={{background:"#eaf5f0"}} onClick={()=>setActiveSubtab(null)}>
+              <div className="cat-card-title" style={{color:"#2d7a5a"}}>משימות</div>
+              <div className="cat-card-sub">{allPendingTasks.length} פתוחות</div>
+            </div>
+            <div className="cat-card" style={{background:"#ede8f8"}} onClick={()=>setActiveSubtab(null)}>
+              <div className="cat-card-title" style={{color:"#6b5ca8"}}>תזכורות</div>
+              <div className="cat-card-sub">{sortedReminderGroups.flatMap(g=>g.reminders).length} פעילות</div>
+            </div>
+          </div>
+        )}
+
+        {currentTab&&(
+          <div style={{padding:"0 20px 100px"}}>
             {/* Subtabs */}
-            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:24}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:20}}>
               <button className={`sub-chip${!activeSubtab?" active":""}`} style={{"--accent":accent}} onClick={()=>setActiveSubtab(null)}>כללי</button>
               {currentTab.subtabs.map(s=>(
                 <div key={s.id} style={{position:"relative"}}>
@@ -744,16 +1270,16 @@ export default function App() {
             <div className="main-grid">
               {/* TASKS */}
               <div>
-                <div style={{display:"flex",alignItems:"center",marginBottom:12}}>
-                  <span style={{fontWeight:700,fontSize:16}}>משימות</span>
-                  {allPendingTasks.length>0&&<span style={{marginRight:8,background:accent,color:"white",borderRadius:10,fontSize:11,fontWeight:700,padding:"1px 7px"}}>{allPendingTasks.length}</span>}
+                <div className="section-header">
+                  <span className="col-header">משימות</span>
+                  {allPendingTasks.length>0&&<span className="section-count">{allPendingTasks.length}</span>}
                 </div>
                 <div style={{display:"flex",gap:8,marginBottom:14}}>
                   <input className="plain-input" style={{flex:1}} placeholder="משימה חדשה..." value={taskInput} onChange={e=>setTaskInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTask()}/>
                   <button className="add-btn" onClick={addTask}>+</button>
                 </div>
 
-                {allPendingTasks.length===0&&<div style={{color:"#ccc",fontSize:13,textAlign:"center",padding:"24px 0",border:"1px dashed #eee",borderRadius:8}}>אין משימות פתוחות</div>}
+                {allPendingTasks.length===0&&<div className="empty-state">אין משימות פתוחות</div>}
 
                 {/* Aggregate: group by source */}
                 {isAggregate ? (
@@ -763,13 +1289,14 @@ export default function App() {
                     return (
                       <div key={gi}>
                         {group.label&&<div className="group-label">{group.label}</div>}
-                        {pending.length===0&&!group.label&&null}
-                        {pending.map(item=>renderTaskRow(item))}
+                        {pending.length>0&&<div className="task-group-wrap">{pending.map(item=>renderTaskRow(item))}</div>}
                       </div>
                     );
                   })
                 ) : (
-                  taskGroups[0].tasks.filter(t=>!t.done).map(item=>renderTaskRow(item))
+                  taskGroups[0].tasks.filter(t=>!t.done).length>0
+                    ? <div className="task-group-wrap">{taskGroups[0].tasks.filter(t=>!t.done).map(item=>renderTaskRow(item))}</div>
+                    : null
                 )}
 
                 {allDoneTasks.length>0&&<>
@@ -787,10 +1314,10 @@ export default function App() {
 
               {/* REMINDERS */}
               <div>
-                <div style={{display:"flex",alignItems:"center",marginBottom:12}}>
-                  <span style={{fontWeight:700,fontSize:16}}>תזכורות</span>
+                <div className="section-header">
+                  <span className="col-header">תזכורות</span>
                   {sortedReminderGroups.flatMap(g=>g.reminders).filter(r=>getReminderStatus(r.startDate,r.endDate)==="active").length>0&&(
-                    <span style={{marginRight:8,background:accent,color:"white",borderRadius:10,fontSize:11,fontWeight:700,padding:"1px 7px"}}>
+                    <span className="section-count">
                       {sortedReminderGroups.flatMap(g=>g.reminders).filter(r=>getReminderStatus(r.startDate,r.endDate)==="active").length} פעיל
                     </span>
                   )}
@@ -802,6 +1329,7 @@ export default function App() {
                     <button className="add-btn" onClick={addReminder}>+</button>
                   </div>
                   {showReminderDates&&(
+                    <>
                     <div style={{display:"flex",gap:8,alignItems:"center",background:"#f9f9f8",border:"1px solid #ebebea",borderRadius:8,padding:"10px 12px"}}>
                       <div style={{display:"flex",flexDirection:"column",gap:3,flex:1}}>
                         <label style={{fontSize:11,color:"#aaa",fontWeight:600}}>מתאריך</label>
@@ -817,10 +1345,11 @@ export default function App() {
                       <span style={{fontSize:13,color:"#92400e",fontWeight:600,whiteSpace:"nowrap"}}>🔔 התרע מ-</span>
                       <input type="date" className="plain-input" style={{flex:1,fontSize:13,padding:"6px 10px",colorScheme:"light"}} value={reminderAlertDate} onChange={e=>setReminderAlertDate(e.target.value)}/>
                     </div>
+                    </>
                   )}
                 </div>
 
-                {sortedReminderGroups.flatMap(g=>g.reminders).length===0&&<div style={{color:"#ccc",fontSize:13,textAlign:"center",padding:"24px 0",border:"1px dashed #eee",borderRadius:8}}>אין תזכורות פתוחות</div>}
+                {sortedReminderGroups.flatMap(g=>g.reminders).length===0&&<div className="empty-state">אין תזכורות פתוחות</div>}
 
                 {sortedReminderGroups.map((group,gi)=>{
                   if(!group.reminders.length&&group.label) return null;
@@ -843,7 +1372,14 @@ export default function App() {
                               </div>
                               <div style={{flex:1,minWidth:0}}>
                                 {editId===item.id
-                                  ?<input autoFocus className="edit-inline" value={editText} onChange={e=>setEditText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")saveEdit("reminder",item.id);if(e.key==="Escape")setEditId(null);}}/>
+                                  ?<div style={{display:"flex",flexDirection:"column",gap:6}}>
+                                      <input autoFocus className="edit-inline" value={editText} onChange={e=>setEditText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")saveEdit("reminder",item.id);if(e.key==="Escape"){setEditId(null);setEditAlertDate("");}}}/>
+                                      <div style={{display:"flex",alignItems:"center",gap:6,background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:8,padding:"6px 10px"}}>
+                                        <span style={{fontSize:12,color:"#92400e",fontWeight:600,whiteSpace:"nowrap"}}>🔔 התרע מ-</span>
+                                        <input type="date" className="edit-inline" style={{fontSize:12,padding:"3px 8px",flex:1,colorScheme:"light"}} value={editAlertDate} onChange={e=>setEditAlertDate(e.target.value)}/>
+                                        <button onClick={()=>saveEdit("reminder",item.id)} style={{background:accent,color:"white",border:"none",borderRadius:6,padding:"4px 10px",fontSize:12,cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontWeight:600,flexShrink:0}}>שמור</button>
+                                      </div>
+                                    </div>
                                   :<span style={{fontSize:14,fontWeight:500,lineHeight:1.4}}>{item.text}</span>}
                                 {(item.startDate||item.endDate)&&(
                                   <div className="date-range-bar" style={{marginTop:8}}>
@@ -857,7 +1393,7 @@ export default function App() {
                                   </div>
                                 )}
                               </div>
-                              <button className="icon-btn" style={{fontSize:18}} onClick={()=>{setEditId(item.id);setEditText(item.text);}}>✎</button>
+                              <button className="icon-btn" style={{fontSize:18}} onClick={()=>{setEditId(item.id);setEditText(item.text);setEditAlertDate(item.alertDate||"");}}>✎</button>
                               <button className="icon-btn del" onClick={()=>deleteItem("reminder",item.id)}>✕</button>
                             </div>
                           </div>
