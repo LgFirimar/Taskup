@@ -12,6 +12,7 @@ export default function SplashScreen({ onComplete }) {
 
     const onCanPlay = () => {
       setReady(true);
+      video.playbackRate = 2.5;
       video.play().catch(() => { clearTimeout(fallback); onComplete(); });
     };
 
@@ -33,7 +34,7 @@ export default function SplashScreen({ onComplete }) {
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 500,
-      background: "white",
+      background: "#c8e5d5",
       display: "flex", alignItems: "center", justifyContent: "center",
     }}>
       <video
