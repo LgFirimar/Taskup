@@ -93,6 +93,7 @@ export default function SplashScreen({ onComplete }) {
           style={{
             position: "absolute",
             width: 140, height: 140,
+            borderRadius: "22%",
             filter: "drop-shadow(0 8px 24px rgba(0,0,0,0.18))",
             animation: bursting ? "splashBurst 0.45s ease-out forwards" : "none",
           }}
