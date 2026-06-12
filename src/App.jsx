@@ -786,6 +786,7 @@ export default function App() {
     @media(max-width:640px){.main-grid{grid-template-columns:1fr;gap:16px;}.dropdown-menu{max-width:calc(100vw - 24px);}}
     @media screen and (-webkit-min-device-pixel-ratio:0){input,textarea,select{font-size:max(16px,1em) !important;}}
     @keyframes voicePulse{0%,100%{box-shadow:0 0 0 4px rgba(239,83,80,0.25)}50%{box-shadow:0 0 0 10px rgba(239,83,80,0.08)}}
+    @keyframes appFadeIn{0%{opacity:0;transform:scale(1.04)}100%{opacity:1;transform:scale(1)}}
   `;
 
   // ── Splash ─────────────────────────────────────────────────────────────────
@@ -815,7 +816,7 @@ export default function App() {
   }
 
   return (
-    <div dir="rtl" style={{minHeight:"100vh",fontFamily:"'Heebo',sans-serif",color:"#1a1a1a"}}>
+    <div dir="rtl" style={{minHeight:"100vh",fontFamily:"'Heebo',sans-serif",color:"#1a1a1a",animation:"appFadeIn 0.5s ease-out both"}}>
       <style>{CSS}</style>
       <div style={{"--accent":accent}}>
 

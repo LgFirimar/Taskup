@@ -1,24 +1,36 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+const KEYFRAMES = `
+  @keyframes splashBurst {
+    0%   { transform: scale(1);   opacity: 1; filter: blur(0px); }
+    50%  { transform: scale(2.2); opacity: 0.7; filter: blur(4px); }
+    100% { transform: scale(6);   opacity: 0; filter: blur(32px); }
+  }
+  @keyframes bgDissolve {
+    0%   { opacity: 1; }
+    100% { opacity: 0; }
+  }
+`;
+
 export default function SplashScreen({ onComplete }) {
   const [started, setStarted] = useState(false);
+  const [bursting, setBursting] = useState(false);
   const doneRef = useRef(false);
 
   const done = useCallback(() => {
     if (doneRef.current) return;
     doneRef.current = true;
-    onComplete();
+    setBursting(true);
+    setTimeout(onComplete, 750);
   }, [onComplete]);
 
-  // ref callback — fires synchronously when the DOM node mounts
-  // iOS allows play() here because it's still within the launch gesture context
   const videoRef = useCallback((node) => {
     if (!node) return;
 
     node.addEventListener("ended", done, { once: true });
     node.addEventListener("error", done, { once: true });
 
-    const fallback = setTimeout(done, 4000);
+    const fallback = setTimeout(done, 5000);
 
     const attemptPlay = () => {
       node.play()
@@ -31,18 +43,13 @@ export default function SplashScreen({ onComplete }) {
     } else {
       node.addEventListener("canplaythrough", attemptPlay, { once: true });
     }
-
-    // Safety: if canplaythrough never fires, try anyway after 500ms
     setTimeout(attemptPlay, 500);
   }, [done]);
 
-  // Intercept first touchstart on the page — iOS sometimes needs this
   useEffect(() => {
-    const handler = (e) => {
+    const handler = () => {
       const video = document.querySelector("#splash-video");
-      if (video && video.paused) {
-        video.play().then(() => setStarted(true)).catch(() => {});
-      }
+      if (video && video.paused) video.play().then(() => setStarted(true)).catch(() => {});
     };
     document.addEventListener("touchstart", handler, { once: true });
     return () => document.removeEventListener("touchstart", handler);
@@ -53,7 +60,10 @@ export default function SplashScreen({ onComplete }) {
       position: "fixed", inset: 0, zIndex: 500,
       background: "#c8e5d5",
       display: "flex", alignItems: "center", justifyContent: "center",
+      animation: bursting ? "bgDissolve 0.75s ease-in forwards" : "none",
     }}>
+      <style>{KEYFRAMES}</style>
+
       <video
         id="splash-video"
         ref={videoRef}
@@ -68,16 +78,24 @@ export default function SplashScreen({ onComplete }) {
           maxHeight: "calc(100vh - 80px)",
           objectFit: "contain",
           borderRadius: 24,
-          opacity: started ? 1 : 0,
-          transition: "opacity 0.3s",
           mixBlendMode: "multiply",
+          opacity: started && !bursting ? 1 : 0,
+          transition: started ? "opacity 0.3s" : "none",
+          animation: bursting ? "splashBurst 0.75s ease-in forwards" : "none",
         }}
       />
+
+      {/* Icon shown while video loads, also bursts */}
       {!started && (
         <img
           src="/icon.png"
-          alt="TaskUp"
-          style={{ position: "absolute", width: 140, height: 140, filter: "drop-shadow(0 8px 24px rgba(0,0,0,0.18))" }}
+          alt=""
+          style={{
+            position: "absolute",
+            width: 140, height: 140,
+            filter: "drop-shadow(0 8px 24px rgba(0,0,0,0.18))",
+            animation: bursting ? "splashBurst 0.75s ease-in forwards" : "none",
+          }}
         />
       )}
     </div>
