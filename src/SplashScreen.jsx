@@ -1,21 +1,52 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export default function SplashScreen({ onComplete }) {
-  const videoRef = useRef(null);
-  const [phase, setPhase] = useState("icon"); // "icon" | "playing"
+  const [started, setStarted] = useState(false);
+  const doneRef = useRef(false);
 
-  const startVideo = () => {
-    const video = videoRef.current;
-    if (!video) { onComplete(); return; }
+  const done = useCallback(() => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    onComplete();
+  }, [onComplete]);
 
-    setPhase("playing");
-    const fallback = setTimeout(onComplete, 5000);
+  // ref callback — fires synchronously when the DOM node mounts
+  // iOS allows play() here because it's still within the launch gesture context
+  const videoRef = useCallback((node) => {
+    if (!node) return;
 
-    video.addEventListener("ended", () => { clearTimeout(fallback); onComplete(); }, { once: true });
-    video.addEventListener("error", () => { clearTimeout(fallback); onComplete(); }, { once: true });
+    node.addEventListener("ended", done, { once: true });
+    node.addEventListener("error", done, { once: true });
 
-    video.play().catch(() => { clearTimeout(fallback); onComplete(); });
-  };
+    const fallback = setTimeout(done, 4000);
+
+    const attemptPlay = () => {
+      node.play()
+        .then(() => setStarted(true))
+        .catch(() => clearTimeout(fallback));
+    };
+
+    if (node.readyState >= 3) {
+      attemptPlay();
+    } else {
+      node.addEventListener("canplaythrough", attemptPlay, { once: true });
+    }
+
+    // Safety: if canplaythrough never fires, try anyway after 500ms
+    setTimeout(attemptPlay, 500);
+  }, [done]);
+
+  // Intercept first touchstart on the page — iOS sometimes needs this
+  useEffect(() => {
+    const handler = (e) => {
+      const video = document.querySelector("#splash-video");
+      if (video && video.paused) {
+        video.play().then(() => setStarted(true)).catch(() => {});
+      }
+    };
+    document.addEventListener("touchstart", handler, { once: true });
+    return () => document.removeEventListener("touchstart", handler);
+  }, []);
 
   return (
     <div style={{
@@ -23,38 +54,30 @@ export default function SplashScreen({ onComplete }) {
       background: "#c8e5d5",
       display: "flex", alignItems: "center", justifyContent: "center",
     }}>
-      {/* Video — hidden until playing */}
       <video
+        id="splash-video"
         ref={videoRef}
         src="/splash_fast.mp4"
         muted
         playsInline
+        autoPlay
         preload="auto"
         style={{
-          position: "absolute",
           width: "calc(100% - 48px)",
           maxWidth: 420,
           maxHeight: "calc(100vh - 80px)",
           objectFit: "contain",
           borderRadius: 24,
-          opacity: phase === "playing" ? 1 : 0,
+          opacity: started ? 1 : 0,
           transition: "opacity 0.3s",
-          pointerEvents: "none",
         }}
       />
-
-      {/* Icon tap target */}
-      {phase === "icon" && (
-        <div onClick={startVideo} style={{ cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
-          <img
-            src="/icon.png"
-            alt="TaskUp"
-            style={{ width: 140, height: 140, filter: "drop-shadow(0 8px 24px rgba(0,0,0,0.18))" }}
-          />
-          <div style={{ fontSize: 13, color: "rgba(0,0,0,0.35)", fontFamily: "'Heebo',sans-serif", fontWeight: 500 }}>
-            לחצי להמשיך
-          </div>
-        </div>
+      {!started && (
+        <img
+          src="/icon.png"
+          alt="TaskUp"
+          style={{ position: "absolute", width: 140, height: 140, filter: "drop-shadow(0 8px 24px rgba(0,0,0,0.18))" }}
+        />
       )}
     </div>
   );
