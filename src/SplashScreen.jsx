@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const KEYFRAMES = `
   @keyframes splashBurst {
-    0%   { transform: scale(1);   opacity: 1; filter: blur(0px); }
-    50%  { transform: scale(2.2); opacity: 0.7; filter: blur(4px); }
-    100% { transform: scale(6);   opacity: 0; filter: blur(32px); }
+    0%   { transform: scale(1);    opacity: 1;   filter: blur(0px); }
+    30%  { transform: scale(1.12); opacity: 0.9; filter: blur(1px); }
+    100% { transform: scale(1.18); opacity: 0;   filter: blur(10px); }
   }
   @keyframes bgDissolve {
     0%   { opacity: 1; }
@@ -21,7 +21,7 @@ export default function SplashScreen({ onComplete }) {
     if (doneRef.current) return;
     doneRef.current = true;
     setBursting(true);
-    setTimeout(onComplete, 750);
+    setTimeout(onComplete, 450);
   }, [onComplete]);
 
   const videoRef = useCallback((node) => {
@@ -60,7 +60,7 @@ export default function SplashScreen({ onComplete }) {
       position: "fixed", inset: 0, zIndex: 500,
       background: "#c8e5d5",
       display: "flex", alignItems: "center", justifyContent: "center",
-      animation: bursting ? "bgDissolve 0.75s ease-in forwards" : "none",
+      animation: bursting ? "bgDissolve 0.45s ease-out forwards" : "none",
     }}>
       <style>{KEYFRAMES}</style>
 
@@ -81,7 +81,7 @@ export default function SplashScreen({ onComplete }) {
           mixBlendMode: "multiply",
           opacity: started && !bursting ? 1 : 0,
           transition: started ? "opacity 0.3s" : "none",
-          animation: bursting ? "splashBurst 0.75s ease-in forwards" : "none",
+          animation: bursting ? "splashBurst 0.45s ease-out forwards" : "none",
         }}
       />
 
@@ -94,7 +94,7 @@ export default function SplashScreen({ onComplete }) {
             position: "absolute",
             width: 140, height: 140,
             filter: "drop-shadow(0 8px 24px rgba(0,0,0,0.18))",
-            animation: bursting ? "splashBurst 0.75s ease-in forwards" : "none",
+            animation: bursting ? "splashBurst 0.45s ease-out forwards" : "none",
           }}
         />
       )}
