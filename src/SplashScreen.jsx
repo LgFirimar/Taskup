@@ -1,7 +1,30 @@
 import { useEffect, useRef, useState } from "react";
 
 export default function SplashScreen({ onComplete }) {
+  const videoRef = useRef(null);
   const [started, setStarted] = useState(false);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) { setTimeout(onComplete, 500); return; }
+
+    const fallback = setTimeout(onComplete, 6000);
+
+    const tryPlay = () => {
+      video.play()
+        .then(() => setStarted(true))
+        .catch(() => { clearTimeout(fallback); onComplete(); });
+    };
+
+    video.addEventListener("loadeddata", tryPlay, { once: true });
+    video.addEventListener("ended", () => { clearTimeout(fallback); onComplete(); }, { once: true });
+    video.addEventListener("error", () => { clearTimeout(fallback); onComplete(); }, { once: true });
+
+    // If loadeddata already fired (cached)
+    if (video.readyState >= 2) tryPlay();
+
+    return () => clearTimeout(fallback);
+  }, [onComplete]);
 
   return (
     <div style={{
@@ -9,21 +32,12 @@ export default function SplashScreen({ onComplete }) {
       background: "#c8e5d5",
       display: "flex", alignItems: "center", justifyContent: "center",
     }}>
-      {!started && (
-        <img
-          src="/icon.png"
-          alt=""
-          style={{ position: "absolute", width: 120, height: 120 }}
-        />
-      )}
       <video
+        ref={videoRef}
         src="/splash_fast.mp4"
         muted
         playsInline
-        autoPlay
-        onPlay={() => setStarted(true)}
-        onEnded={onComplete}
-        onError={onComplete}
+        preload="auto"
         style={{
           width: "calc(100% - 48px)",
           maxWidth: 420,
@@ -34,6 +48,9 @@ export default function SplashScreen({ onComplete }) {
           transition: "opacity 0.3s",
         }}
       />
+      {!started && (
+        <img src="/icon.png" alt="" style={{ position: "absolute", width: 120, height: 120 }} />
+      )}
     </div>
   );
 }
