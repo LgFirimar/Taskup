@@ -578,8 +578,24 @@ export default function App() {
   };
 
   // ── AI breakdown ──────────────────────────────────────────────────────────
-  const breakdownTask = async (taskId,taskText)=>{
+  // ✂ scissors → adds directly; ✦✦ → shows editable suggestions (pendingBreakdown)
+  const breakdownTaskDirect = async (taskId,taskText)=>{
+    const capTab=activeTab; const capSubtab=activeSubtab; const hasSub=!!currentSubtab;
     setBreakingDownId(taskId); setExpandedTaskId(taskId);
+    try{
+      const res=await fetch(`${WORKER_URL}/breakdown`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({task:taskText})});
+      if(!res.ok)throw new Error();
+      const{steps}=await res.json();
+      if(steps?.length){
+        const newSubs=steps.map(text=>({id:uid(),text,done:false}));
+        setTabs(prev=>prev.map(t=>{ if(t.id!==capTab)return t; const u=tasks=>tasks.map(task=>task.id===taskId?{...task,subtasks:[...(task.subtasks||[]),...newSubs]}:task); if(hasSub)return{...t,subtabs:t.subtabs.map(s=>s.id===capSubtab?{...s,tasks:u(s.tasks)}:s)}; return{...t,tasks:u(t.tasks)}; }));
+      }
+    }catch{}
+    setBreakingDownId(null);
+  };
+
+  const breakdownTask = async (taskId,taskText)=>{
+    setBreakingDownId(taskId);
     try{
       const res=await fetch(`${WORKER_URL}/breakdown`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({task:taskText})});
       if(!res.ok)throw new Error();
@@ -659,10 +675,10 @@ export default function App() {
                 <path d="M1.5 5.5L5.5 9.5L12.5 1.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </button>
-            {/* AI breakdown — stars */}
-            <button className="icon-btn" style={{color:breakingDownId===item.id?"#ffa726":hasPending?"#ffa726":"#c8b8a0",fontSize:13,letterSpacing:-1}} title="קלוד יציע צעדים"
-              onClick={()=>breakdownTask(item.id,item.text)}>
-              {breakingDownId===item.id?<div className="spinner" style={{borderTopColor:"#ffa726",borderColor:"#ffa72633"}}/>:"✦✦"}
+            {/* Scissors — original breakdown */}
+            <button className="icon-btn" style={{color:breakingDownId===item.id?"#ffa726":"#d4a96e",fontSize:14}} title="קטן עלי"
+              onClick={()=>breakdownTaskDirect(item.id,item.text)}>
+              {breakingDownId===item.id?<div className="spinner" style={{borderTopColor:"#ffa726",borderColor:"#ffa72633"}}/>:"✂"}
             </button>
             <button className="icon-btn" style={{fontSize:17}} onClick={()=>{setEditId(item.id);setEditText(item.text);}}>✎</button>
             <button className="icon-btn del" onClick={()=>deleteItem("task",item.id)}>✕</button>
@@ -703,12 +719,18 @@ export default function App() {
           </div>
         )}
 
-        {/* Manual add subtask */}
+        {/* Manual add subtask + AI suggest button */}
         {expandedTaskId===item.id&&!hasPending&&(
-          <div style={{marginTop:8,paddingRight:28,display:"flex",gap:6}}>
+          <div style={{marginTop:8,paddingRight:28,display:"flex",gap:6,alignItems:"center"}}>
             <input autoFocus className="edit-inline" style={{fontSize:13}} placeholder="הוסיפי צעד קטן..." value={subtaskInput} onChange={e=>setSubtaskInput(e.target.value)}
               onKeyDown={e=>{if(e.key==="Enter"){addSubtask(item.id,subtaskInput);setSubtaskInput("");}if(e.key==="Escape"){setExpandedTaskId(null);setSubtaskInput("");}}}/>
             <button className="add-btn" style={{padding:"4px 10px",fontSize:13}} onClick={()=>{addSubtask(item.id,subtaskInput);setSubtaskInput("");}}>+</button>
+            <button
+              title="שאלי את קלוד"
+              onClick={()=>breakdownTask(item.id,item.text)}
+              style={{padding:"4px 8px",borderRadius:10,border:"1.5px solid #f0c060",background:"#fffbeb",cursor:"pointer",fontSize:12,fontWeight:700,color:"#b45309",letterSpacing:0,whiteSpace:"nowrap",fontFamily:"'Heebo',sans-serif",flexShrink:0}}>
+              {breakingDownId===item.id?<div className="spinner" style={{borderTopColor:"#b45309",borderColor:"#b4530933",width:12,height:12}}/>:"✦✦"}
+            </button>
           </div>
         )}
 
