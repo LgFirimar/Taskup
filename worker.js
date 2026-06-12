@@ -55,6 +55,36 @@ export default {
       return new Response(JSON.stringify({ items }), { headers: { ...CORS, "content-type": "application/json" } });
     }
 
+    if (request.method === "POST" && url.pathname === "/summarize-email") {
+      const { subject, sender, body, format } = await request.json();
+
+      const formatInstructions = {
+        bullets:  "סכמי את המייל ב-3-5 נקודות קצרות בעברית.",
+        summary:  "כתבי סיכום קצר של 2-3 משפטים בעברית.",
+        tasks:    "חלצי את כל המשימות שיש לבצע מהמייל. כל משימה בשורה נפרדת, ללא מספרים.",
+        dates:    "חלצי את כל התאריכים, מועדים ואירועים מהמייל. פורמט: YYYY-MM-DD | תיאור. כל שורה נפרדת.",
+      };
+
+      const prompt = `מאת: ${sender}\nנושא: ${subject}\n\nתוכן:\n${body.slice(0, 3000)}\n\n---\n${formatInstructions[format] || formatInstructions.summary}`;
+
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": env.ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 500,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      const data = await res.json();
+      const result = data.content?.[0]?.text || "";
+      return new Response(JSON.stringify({ result }), { headers: { ...CORS, "content-type": "application/json" } });
+    }
+
     return new Response("Not found", { status: 404 });
   },
 };

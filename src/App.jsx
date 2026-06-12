@@ -111,6 +111,17 @@ export default function App() {
   const [newBoardText,setNewBoardText] = useState("");
   const [aiBreakingProj,setAiBreakingProj] = useState(null);
 
+  // ── Email integration ─────────────────────────────────────────────────────
+  const [showEmail,setShowEmail] = useState(false);
+  const [gmailToken,setGmailToken] = useState(()=>localStorage.getItem("gmail_token")||null);
+  const [emailRules,setEmailRules] = useState(()=>{ try{return JSON.parse(localStorage.getItem("email_rules"))||[];}catch{return[];} });
+  const [emailSummaries,setEmailSummaries] = useState([]);
+  const [emailLoading,setEmailLoading] = useState(false);
+  const [showNewRule,setShowNewRule] = useState(false);
+  const [newRule,setNewRule] = useState({sender:"",subject:"",format:"bullets"});
+  const [gmailClientId,setGmailClientId] = useState(()=>localStorage.getItem("gmail_client_id")||"");
+  const [showClientIdInput,setShowClientIdInput] = useState(false);
+
   // ── Reminder alerts ───────────────────────────────────────────────────────
   const [alertReminders,setAlertReminders] = useState([]);
   const [showAlertModal,setShowAlertModal] = useState(false);
@@ -362,6 +373,93 @@ export default function App() {
   const getProjectProgress = (pj)=>{
     const all=pj.tasks.length; if(!all) return 0;
     return Math.round(pj.tasks.filter(t=>t.done).length/all*100);
+  };
+
+  // ── Email functions ────────────────────────────────────────────────────────
+  const saveEmailRules = (rules) => { setEmailRules(rules); localStorage.setItem("email_rules", JSON.stringify(rules)); };
+
+  const connectGmail = () => {
+    const clientId = gmailClientId.trim();
+    if (!clientId) { setShowClientIdInput(true); return; }
+    const scope = "https://www.googleapis.com/auth/gmail.readonly";
+    const redirect = window.location.origin;
+    const state = Math.random().toString(36).slice(2);
+    sessionStorage.setItem("oauth_state", state);
+    const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirect)}&response_type=token&scope=${encodeURIComponent(scope)}&state=${state}`;
+    window.location.href = url;
+  };
+
+  const disconnectGmail = () => { setGmailToken(null); localStorage.removeItem("gmail_token"); setEmailSummaries([]); };
+
+  // Handle OAuth redirect callback
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash.includes("access_token")) {
+      const params = new URLSearchParams(hash.slice(1));
+      const token = params.get("access_token");
+      const state = params.get("state");
+      if (token && state === sessionStorage.getItem("oauth_state")) {
+        localStorage.setItem("gmail_token", token);
+        setGmailToken(token);
+        window.history.replaceState({}, document.title, window.location.pathname);
+        setShowEmail(true);
+      }
+    }
+  }, []);
+
+  const fetchAndSummarize = async () => {
+    if (!gmailToken || emailRules.length === 0) return;
+    setEmailLoading(true);
+    const summaries = [];
+    for (const rule of emailRules) {
+      try {
+        // Build Gmail search query
+        let q = "newer_than:7d in:inbox";
+        if (rule.sender) q += ` from:${rule.sender}`;
+        if (rule.subject) q += ` subject:${rule.subject}`;
+
+        const searchRes = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=5`,
+          { headers: { Authorization: `Bearer ${gmailToken}` } }
+        );
+        if (searchRes.status === 401) { disconnectGmail(); setEmailLoading(false); return; }
+        const searchData = await searchRes.json();
+        const threads = searchData.threads || [];
+
+        for (const thread of threads.slice(0, 3)) {
+          const tRes = await fetch(
+            `https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=full`,
+            { headers: { Authorization: `Bearer ${gmailToken}` } }
+          );
+          const tData = await tRes.json();
+          const msg = tData.messages?.[0];
+          if (!msg) continue;
+          const headers = msg.payload?.headers || [];
+          const subject = headers.find(h=>h.name==="Subject")?.value || "";
+          const sender = headers.find(h=>h.name==="From")?.value || "";
+          const date = headers.find(h=>h.name==="Date")?.value || "";
+
+          // Decode body
+          const getBody = (part) => {
+            if (part.body?.data) return atob(part.body.data.replace(/-/g,"+").replace(/_/g,"/"));
+            if (part.parts) return part.parts.map(getBody).join(" ");
+            return "";
+          };
+          const rawBody = getBody(msg.payload);
+          const body = rawBody.replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
+
+          const sumRes = await fetch(`${WORKER_URL}/summarize-email`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ subject, sender, body: body.slice(0,3000), format: rule.format }),
+          });
+          const sumData = await sumRes.json();
+          summaries.push({ id: thread.id, subject, sender, date, summary: sumData.result, format: rule.format, ruleId: rule.id });
+        }
+      } catch(e) { console.error(e); }
+    }
+    setEmailSummaries(summaries);
+    setEmailLoading(false);
   };
 
   // ── Profile actions ────────────────────────────────────────────────────────
@@ -952,6 +1050,98 @@ export default function App() {
           </div>
         )}
 
+        {/* Email overlay */}
+        {showEmail&&(
+          <div style={{position:"fixed",inset:0,background:"#f5f6fa",zIndex:200,direction:"rtl",display:"flex",flexDirection:"column",fontFamily:"'Heebo',sans-serif"}}>
+            <div style={{background:"white",borderBottom:"1px solid #eeeef5",padding:"14px 20px",display:"flex",alignItems:"center",gap:12}}>
+              <button className="back-btn" onClick={()=>setShowEmail(false)}>
+                <svg width="22" height="16" viewBox="0 0 22 16" fill="none"><path d="M3 8H19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M13 2L19 8L13 14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                חזרה
+              </button>
+              <span style={{fontWeight:800,fontSize:17,flex:1}}>📧 סיכומי מייל</span>
+              {gmailToken
+                ? <button onClick={disconnectGmail} style={{background:"none",border:"none",fontSize:12,color:"#e07070",cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>התנתק</button>
+                : <button onClick={connectGmail} style={{background:"#4285f4",color:"white",border:"none",borderRadius:10,padding:"6px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>התחבר ל-Gmail</button>
+              }
+            </div>
+
+            <div style={{flex:1,overflowY:"auto",padding:20}}>
+
+              {/* Client ID setup */}
+              {showClientIdInput&&(
+                <div style={{background:"#fffbeb",border:"1.5px solid #fcd34d",borderRadius:14,padding:16,marginBottom:16}}>
+                  <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>🔑 Google OAuth Client ID</div>
+                  <div style={{fontSize:12,color:"#666",marginBottom:10,lineHeight:1.6}}>
+                    נדרש Client ID מ-Google Cloud Console:<br/>
+                    1. כנסי ל-console.cloud.google.com<br/>
+                    2. צרי פרויקט → Enable Gmail API<br/>
+                    3. Credentials → Create OAuth Client ID (Web Application)<br/>
+                    4. הוסיפי <b>{window.location.origin}</b> ל-Authorized JavaScript Origins<br/>
+                    5. העתיקי את ה-Client ID לכאן
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <input className="plain-input" style={{flex:1,fontSize:13}} placeholder="xxxxxxxx.apps.googleusercontent.com" value={gmailClientId} onChange={e=>setGmailClientId(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(localStorage.setItem("gmail_client_id",gmailClientId),setShowClientIdInput(false),connectGmail())}/>
+                    <button className="add-btn" onClick={()=>{localStorage.setItem("gmail_client_id",gmailClientId);setShowClientIdInput(false);connectGmail();}}>אישור</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Rules */}
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+                <span style={{fontWeight:700,fontSize:14}}>חוקי סיכום</span>
+                <button onClick={()=>setShowNewRule(p=>!p)} style={{background:accent,color:"white",border:"none",borderRadius:10,padding:"5px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>+ חוק חדש</button>
+              </div>
+
+              {showNewRule&&(
+                <div style={{background:"white",borderRadius:14,padding:16,marginBottom:12,boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
+                  <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                    <input className="plain-input" style={{fontSize:13}} placeholder="שולח (לדוג' momence.com, @gmail.com)" value={newRule.sender} onChange={e=>setNewRule(p=>({...p,sender:e.target.value}))}/>
+                    <input className="plain-input" style={{fontSize:13}} placeholder="נושא (מילות מפתח, אופציונלי)" value={newRule.subject} onChange={e=>setNewRule(p=>({...p,subject:e.target.value}))}/>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                      {[["bullets","• נקודות"],["summary","📝 סיכום"],["tasks","✅ משימות"],["dates","📅 תאריכים"]].map(([v,l])=>(
+                        <button key={v} onClick={()=>setNewRule(p=>({...p,format:v}))} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${newRule.format===v?accent:"#dde"}`,background:newRule.format===v?`${accent}15`:"white",color:newRule.format===v?accent:"#888",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,fontWeight:newRule.format===v?700:400}}>{l}</button>
+                      ))}
+                    </div>
+                    <button className="add-btn" onClick={()=>{if(!newRule.sender&&!newRule.subject)return; saveEmailRules([...emailRules,{id:uid(),...newRule}]); setNewRule({sender:"",subject:"",format:"bullets"}); setShowNewRule(false);}}>שמור חוק</button>
+                  </div>
+                </div>
+              )}
+
+              {emailRules.map(rule=>(
+                <div key={rule.id} style={{background:"white",borderRadius:12,padding:"12px 14px",marginBottom:8,boxShadow:"0 1px 6px rgba(0,0,0,0.05)",display:"flex",alignItems:"center",gap:10,borderRight:`3px solid ${accent}`}}>
+                  <div style={{flex:1}}>
+                    {rule.sender&&<div style={{fontSize:13,fontWeight:600}}>מ: {rule.sender}</div>}
+                    {rule.subject&&<div style={{fontSize:12,color:"#888"}}>נושא: {rule.subject}</div>}
+                    <div style={{fontSize:11,color:accent,marginTop:2}}>{{"bullets":"• נקודות","summary":"סיכום","tasks":"משימות","dates":"תאריכים"}[rule.format]}</div>
+                  </div>
+                  <button onClick={()=>saveEmailRules(emailRules.filter(r=>r.id!==rule.id))} style={{background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:16}}>✕</button>
+                </div>
+              ))}
+
+              {emailRules.length===0&&<div className="empty-state" style={{marginBottom:16}}>הגדירי חוק כדי להתחיל</div>}
+
+              {/* Fetch button */}
+              {gmailToken&&emailRules.length>0&&(
+                <button onClick={fetchAndSummarize} disabled={emailLoading} style={{width:"100%",background:accent,color:"white",border:"none",borderRadius:14,padding:"13px 0",fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                  {emailLoading?<><div className="spinner" style={{borderTopColor:"white",borderColor:"rgba(255,255,255,0.3)"}}/>טוען מיילים...</>:"🔄 סכמי מיילים עכשיו"}
+                </button>
+              )}
+
+              {/* Summaries */}
+              {emailSummaries.map((s,i)=>(
+                <div key={s.id||i} style={{background:"white",borderRadius:16,padding:"16px 18px",marginBottom:12,boxShadow:"0 1px 8px rgba(0,0,0,0.07)"}}>
+                  <div style={{fontSize:11,color:"#bbb",marginBottom:4}}>{s.sender} • {s.date?new Date(s.date).toLocaleDateString("he-IL",{day:"numeric",month:"short"}):"" }</div>
+                  <div style={{fontWeight:700,fontSize:14,marginBottom:10,color:"#1a1a2e"}}>{s.subject}</div>
+                  <div style={{fontSize:13,color:"#444",lineHeight:1.7,whiteSpace:"pre-line"}}>{s.summary}</div>
+                </div>
+              ))}
+              {emailSummaries.length===0&&!emailLoading&&gmailToken&&emailRules.length>0&&(
+                <div className="empty-state">לחצי "סכמי מיילים עכשיו" כדי לראות תוצאות</div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Projects overlay */}
         {(showProjects||openProjectId)&&(
           <div style={{position:"fixed",inset:0,background:"#f5f6fa",zIndex:200,direction:"rtl",display:"flex",flexDirection:"column",fontFamily:"'Heebo',sans-serif"}}>
@@ -1239,9 +1429,10 @@ export default function App() {
         )}
 
         {/* Side pills */}
-        <button className={`side-pill${showListsMenu==="shopping"?" active-pill":""}`} style={{bottom:172}} onClick={()=>setShowListsMenu(showListsMenu==="shopping"?null:"shopping")}>🛒 קניות</button>
-        <button className={`side-pill${showListsMenu==="notes"?" active-pill":""}`} style={{bottom:128}} onClick={()=>setShowListsMenu(showListsMenu==="notes"?null:"notes")}>📝 פתקים</button>
-        <button className={`side-pill${(showProjects||openProjectId)?" active-pill":""}`} style={{bottom:84}} onClick={()=>{setShowProjects(true);setOpenProjectId(null);}}>🗂 פרויקטים</button>
+        <button className={`side-pill${showListsMenu==="shopping"?" active-pill":""}`} style={{bottom:216}} onClick={()=>setShowListsMenu(showListsMenu==="shopping"?null:"shopping")}>🛒 קניות</button>
+        <button className={`side-pill${showListsMenu==="notes"?" active-pill":""}`} style={{bottom:172}} onClick={()=>setShowListsMenu(showListsMenu==="notes"?null:"notes")}>📝 פתקים</button>
+        <button className={`side-pill${(showProjects||openProjectId)?" active-pill":""}`} style={{bottom:128}} onClick={()=>{setShowProjects(true);setOpenProjectId(null);}}>🗂 פרויקטים</button>
+        <button className={`side-pill${showEmail?" active-pill":""}`} style={{bottom:84}} onClick={()=>setShowEmail(true)}>📧 מייל</button>
         <button className="fab" style={{background:accent}} onClick={()=>setShowQuickCapture(true)}>+</button>
 
         {/* Voice indicator */}
