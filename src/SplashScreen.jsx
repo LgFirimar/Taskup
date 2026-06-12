@@ -70,6 +70,7 @@ export default function SplashScreen({ onComplete }) {
           borderRadius: 24,
           opacity: started ? 1 : 0,
           transition: "opacity 0.3s",
+          mixBlendMode: "multiply",
         }}
       />
       {!started && (
