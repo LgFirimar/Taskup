@@ -82,6 +82,7 @@ export default function App() {
   const [expandedTaskId,setExpandedTaskId] = useState(null);
   const [subtaskInput,setSubtaskInput] = useState("");
   const [breakingDownId,setBreakingDownId] = useState(null);
+  const [pendingBreakdown,setPendingBreakdown] = useState(null); // {taskId, steps:[{id,text}]}
   const [showQuickCapture,setShowQuickCapture] = useState(false);
   const [quickText,setQuickText] = useState("");
 
@@ -416,7 +417,10 @@ export default function App() {
     for (const rule of emailRules) {
       try {
         // Build Gmail search query
-        let q = "newer_than:7d in:inbox";
+        let q = "in:inbox";
+        if (rule.dateAll) { /* no date filter */ }
+        else if (rule.dateFrom) { q += ` after:${rule.dateFrom.replace(/-/g,"/")}`; }
+        else { q += " newer_than:7d"; }
         if (rule.sender) q += ` from:${rule.sender}`;
         if (rule.subject) q += ` subject:${rule.subject}`;
 
@@ -575,18 +579,22 @@ export default function App() {
 
   // ── AI breakdown ──────────────────────────────────────────────────────────
   const breakdownTask = async (taskId,taskText)=>{
-    const capTab=activeTab; const capSubtab=activeSubtab; const hasSub=!!currentSubtab;
     setBreakingDownId(taskId); setExpandedTaskId(taskId);
     try{
       const res=await fetch(`${WORKER_URL}/breakdown`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({task:taskText})});
       if(!res.ok)throw new Error();
       const{steps}=await res.json();
-      if(steps?.length){
-        const newSubs=steps.map(text=>({id:uid(),text,done:false}));
-        setTabs(prev=>prev.map(t=>{ if(t.id!==capTab)return t; const u=tasks=>tasks.map(task=>task.id===taskId?{...task,subtasks:[...(task.subtasks||[]),...newSubs]}:task); if(hasSub)return{...t,subtabs:t.subtabs.map(s=>s.id===capSubtab?{...s,tasks:u(s.tasks)}:s)}; return{...t,tasks:u(t.tasks)}; }));
-      }
+      if(steps?.length) setPendingBreakdown({taskId, steps:steps.map(t=>({id:uid(),text:t}))});
     }catch{}
     setBreakingDownId(null);
+  };
+
+  const confirmBreakdown = ()=>{
+    if(!pendingBreakdown) return;
+    const {taskId, steps} = pendingBreakdown;
+    const newSubs = steps.filter(s=>s.text.trim()).map(s=>({id:s.id,text:s.text.trim(),done:false}));
+    setTabs(prev=>prev.map(t=>{ if(t.id!==activeTab)return t; const u=tasks=>tasks.map(task=>task.id===taskId?{...task,subtasks:[...(task.subtasks||[]),...newSubs]}:task); return{...t,tasks:u(t.tasks),subtabs:t.subtabs.map(s=>({...s,tasks:u(s.tasks)}))}; }));
+    setPendingBreakdown(null);
   };
 
   // ── Quick capture ─────────────────────────────────────────────────────────
@@ -630,6 +638,7 @@ export default function App() {
   const renderTaskRow = (item) => {
     const prioColor = item.priority?PRIO_COLOR[item.priority]:null;
     const prioClass = item.priority?` prio-${item.priority}`:"";
+    const hasPending = pendingBreakdown?.taskId===item.id;
     return (
       <div key={item.id} className={`task-row${prioClass}`} style={{flexDirection:"column",gap:0}}>
         <div style={{display:"flex",alignItems:"flex-start",gap:10,width:"100%"}}>
@@ -644,36 +653,58 @@ export default function App() {
           </div>
 
           <div style={{display:"flex",alignItems:"center",flexShrink:0,gap:2}}>
-            <button className="icon-btn done-btn" style={{"--accent":accent}} title="סיימתי!" onClick={()=>handleBigComplete(item.id)}>✓</button>
-            <button className="icon-btn" style={{color:breakingDownId===item.id?"#ffa726":"#d4a96e",fontSize:14}} title="קטן עלי"
+            {/* Done — checkmark SVG */}
+            <button className="icon-btn done-btn" style={{"--accent":accent}} title="סיימתי!" onClick={()=>handleBigComplete(item.id)}>
+              <svg width="14" height="11" viewBox="0 0 14 11" fill="none">
+                <path d="M1.5 5.5L5.5 9.5L12.5 1.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+            {/* AI breakdown — stars */}
+            <button className="icon-btn" style={{color:breakingDownId===item.id?"#ffa726":hasPending?"#ffa726":"#c8b8a0",fontSize:13,letterSpacing:-1}} title="קלוד יציע צעדים"
               onClick={()=>breakdownTask(item.id,item.text)}>
-              {breakingDownId===item.id?<div className="spinner" style={{borderTopColor:"#ffa726",borderColor:"#ffa72633"}}/>:"✂"}
+              {breakingDownId===item.id?<div className="spinner" style={{borderTopColor:"#ffa726",borderColor:"#ffa72633"}}/>:"✦✦"}
             </button>
             <button className="icon-btn" style={{fontSize:17}} onClick={()=>{setEditId(item.id);setEditText(item.text);}}>✎</button>
             <button className="icon-btn del" onClick={()=>deleteItem("task",item.id)}>✕</button>
           </div>
         </div>
 
-        {/* Subtasks */}
+        {/* Existing subtasks */}
         {(item.subtasks||[]).length>0&&(
           <div style={{marginTop:8,paddingRight:28}}>
             {(item.subtasks||[]).map(st=>(
               <div key={st.id} className="subtask-row" style={{"--accent":accent}}>
-                <button className={`subtask-check${st.done?" checked":""}`} onClick={()=>toggleSubtask(item.id,st.id)}>{st.done?"✓":""}</button>
+                <button className={`subtask-check${st.done?" checked":""}`} onClick={()=>toggleSubtask(item.id,st.id)}>
+                  {st.done&&<svg width="9" height="7" viewBox="0 0 9 7" fill="none"><path d="M1 3.5L3.5 6L8 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                </button>
                 <span style={{fontSize:13,flex:1,color:st.done?"#bbb":"#555",textDecoration:st.done?"line-through":"none"}}>{st.text}</span>
                 <button className="icon-btn del" style={{fontSize:11,minWidth:"unset",minHeight:"unset",padding:"2px 3px"}} onClick={()=>deleteSubtask(item.id,st.id)}>✕</button>
               </div>
             ))}
-            {expandedTaskId===item.id&&(
-              <div style={{display:"flex",gap:6,marginTop:4}}>
-                <input autoFocus className="edit-inline" style={{fontSize:13}} placeholder="הוסיפי צעד קטן..." value={subtaskInput} onChange={e=>setSubtaskInput(e.target.value)}
-                  onKeyDown={e=>{if(e.key==="Enter"){addSubtask(item.id,subtaskInput);setSubtaskInput("");}if(e.key==="Escape"){setExpandedTaskId(null);setSubtaskInput("");}}}/>
-                <button className="add-btn" style={{padding:"4px 10px",fontSize:13}} onClick={()=>{addSubtask(item.id,subtaskInput);setSubtaskInput("");}}>+</button>
-              </div>
-            )}
           </div>
         )}
-        {expandedTaskId===item.id&&(item.subtasks||[]).length===0&&(
+
+        {/* AI pending suggestions */}
+        {hasPending&&(
+          <div style={{marginTop:10,paddingRight:12,background:"#fffdf5",borderRadius:10,padding:"10px 12px",border:"1px solid #fde68a"}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#b45309",marginBottom:8}}>✦ הצעות קלוד — ערכי או מחקי לפני אישור</div>
+            {pendingBreakdown.steps.map((s,idx)=>(
+              <div key={s.id} style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                <span style={{fontSize:11,color:"#bbb",minWidth:16}}>{idx+1}.</span>
+                <input className="edit-inline" style={{flex:1,fontSize:13}} value={s.text}
+                  onChange={e=>setPendingBreakdown(p=>({...p,steps:p.steps.map(x=>x.id===s.id?{...x,text:e.target.value}:x)}))}/>
+                <button onClick={()=>setPendingBreakdown(p=>({...p,steps:p.steps.filter(x=>x.id!==s.id)}))} style={{background:"none",border:"none",color:"#ddd",cursor:"pointer",fontSize:14,flexShrink:0}}>✕</button>
+              </div>
+            ))}
+            <div style={{display:"flex",gap:8,marginTop:10}}>
+              <button className="add-btn" style={{flex:1,padding:"7px 0",fontSize:13}} onClick={confirmBreakdown}>הוסף הכל</button>
+              <button onClick={()=>setPendingBreakdown(null)} style={{background:"none",border:"1px solid #e5e5e3",borderRadius:10,padding:"7px 14px",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:13,color:"#888"}}>ביטול</button>
+            </div>
+          </div>
+        )}
+
+        {/* Manual add subtask */}
+        {expandedTaskId===item.id&&!hasPending&&(
           <div style={{marginTop:8,paddingRight:28,display:"flex",gap:6}}>
             <input autoFocus className="edit-inline" style={{fontSize:13}} placeholder="הוסיפי צעד קטן..." value={subtaskInput} onChange={e=>setSubtaskInput(e.target.value)}
               onKeyDown={e=>{if(e.key==="Enter"){addSubtask(item.id,subtaskInput);setSubtaskInput("");}if(e.key==="Escape"){setExpandedTaskId(null);setSubtaskInput("");}}}/>
@@ -681,8 +712,13 @@ export default function App() {
           </div>
         )}
 
-        {/* Victory ring */}
-        {completingId===item.id&&<div className="ring" style={{"--accent":accent}}/>}
+        {/* Complete animation */}
+        {completingId===item.id&&(
+          <>
+            <div className="ring" style={{"--accent":accent}}/>
+            <div className="ring-outer" style={{"--accent":accent}}/>
+          </>
+        )}
       </div>
     );
   };
@@ -817,10 +853,11 @@ export default function App() {
     .icon-btn:hover{color:#8888aa;background:rgba(100,100,160,0.06);}
     .icon-btn.del:hover{color:#e08080;background:rgba(220,80,80,0.06);}
     .icon-btn.done-btn{
-      color:transparent;width:26px;height:26px;border-radius:50%;
-      border:2px solid #dde;background:white;transition:all 0.18s;font-size:13px;font-weight:700;
+      color:#d8d8e8;width:28px;height:28px;border-radius:50%;
+      border:2px solid #dde;background:white;transition:all 0.2s;
+      display:flex;align-items:center;justify-content:center;
     }
-    .icon-btn.done-btn:hover{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,white);}
+    .icon-btn.done-btn:hover{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,white);transform:scale(1.12);}
 
     /* ── Labels ── */
     .section-label{font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#c8c8d8;margin:20px 0 8px;}
@@ -874,7 +911,9 @@ export default function App() {
     .empty-state{color:#ccc;font-size:13px;text-align:center;padding:24px;border:1.5px dashed #e8e8f2;border-radius:12px;background:white;}
 
     /* ── Animations ── */
-    @keyframes ringOut{0%{transform:scale(0.8);opacity:0.6}100%{transform:scale(3);opacity:0}}
+    @keyframes ringOut{0%{transform:scale(0.8);opacity:0.8}100%{transform:scale(3.5);opacity:0}}
+    @keyframes ringOutOuter{0%{transform:scale(0.6);opacity:0.5}100%{transform:scale(5);opacity:0}}
+    .ring-outer{position:absolute;top:8px;right:10px;width:24px;height:24px;border-radius:50%;border:1.5px solid var(--accent);opacity:0.4;animation:ringOutOuter 0.8s ease-out 0.1s forwards;pointer-events:none;}
     @keyframes bigFly{0%{transform:translate(0,0) scale(1.4);opacity:1}100%{transform:translate(var(--dx),var(--dy)) scale(0);opacity:0}}
     @keyframes spin{to{transform:rotate(360deg)}}
     @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
@@ -1000,11 +1039,13 @@ export default function App() {
           <div style={{position:"fixed",inset:0,background:"white",zIndex:200,direction:"rtl",display:"flex",flexDirection:"column"}}>
             <div style={{padding:"14px 20px",borderBottom:"1px solid #ebebea",display:"flex",alignItems:"center",gap:12,background:"white"}}>
               <button className="back-btn" onClick={()=>{setOpenListId(null);setOpenListType(null);setListItemInput("");}}>
-                <svg width="22" height="16" viewBox="0 0 22 16" fill="none">
-                  <path d="M3 8H19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  <path d="M13 2L19 8L13 14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <svg width="28" height="22" viewBox="0 0 28 22" fill="none">
+                  <path d="M5 11 Q9 11 11 11" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  <path d="M11 11 H23" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  <path d="M16 5 L23 11 L16 17" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <circle cx="5" cy="11" r="3" fill="currentColor" opacity="0.45"/>
                 </svg>
-                חזרה
+                <span style={{fontSize:11,fontWeight:600}}>חזרה</span>
               </button>
               <span style={{fontWeight:700,fontSize:18,flex:1}}>{openList.name}</span>
               {openListType==="shopping"&&(
@@ -1096,15 +1137,29 @@ export default function App() {
 
               {showNewRule&&(
                 <div style={{background:"white",borderRadius:14,padding:16,marginBottom:12,boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                    <span style={{fontSize:13,fontWeight:700}}>חוק חדש</span>
+                    <button onClick={()=>{setShowNewRule(false);setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false});}} style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",fontSize:18,lineHeight:1}}>✕</button>
+                  </div>
                   <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                    <input className="plain-input" style={{fontSize:13}} placeholder="שולח (לדוג' momence.com, @gmail.com)" value={newRule.sender} onChange={e=>setNewRule(p=>({...p,sender:e.target.value}))}/>
+                    <input className="plain-input" style={{fontSize:13}} placeholder="שולח (לדוג' momence.com)" value={newRule.sender} onChange={e=>setNewRule(p=>({...p,sender:e.target.value}))}/>
                     <input className="plain-input" style={{fontSize:13}} placeholder="נושא (מילות מפתח, אופציונלי)" value={newRule.subject} onChange={e=>setNewRule(p=>({...p,subject:e.target.value}))}/>
+                    {/* Date range */}
+                    <div style={{display:"flex",alignItems:"center",gap:8,background:"#f9f9f8",borderRadius:10,padding:"8px 12px"}}>
+                      <label style={{fontSize:12,color:"#888",whiteSpace:"nowrap"}}>תקופה:</label>
+                      <label style={{display:"flex",alignItems:"center",gap:4,fontSize:12,cursor:"pointer"}}>
+                        <input type="checkbox" checked={newRule.dateAll||false} onChange={e=>setNewRule(p=>({...p,dateAll:e.target.checked,dateFrom:""}))}/> כל המיילים
+                      </label>
+                      {!newRule.dateAll&&<input type="date" className="plain-input" style={{flex:1,fontSize:12,padding:"4px 8px",colorScheme:"light"}} value={newRule.dateFrom||""} onChange={e=>setNewRule(p=>({...p,dateFrom:e.target.value}))} placeholder="מתאריך"/>}
+                    </div>
                     <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                       {[["bullets","• נקודות"],["summary","📝 סיכום"],["tasks","✅ משימות"],["dates","📅 תאריכים"]].map(([v,l])=>(
                         <button key={v} onClick={()=>setNewRule(p=>({...p,format:v}))} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${newRule.format===v?accent:"#dde"}`,background:newRule.format===v?`${accent}15`:"white",color:newRule.format===v?accent:"#888",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,fontWeight:newRule.format===v?700:400}}>{l}</button>
                       ))}
                     </div>
-                    <button className="add-btn" onClick={()=>{if(!newRule.sender&&!newRule.subject)return; saveEmailRules([...emailRules,{id:uid(),...newRule}]); setNewRule({sender:"",subject:"",format:"bullets"}); setShowNewRule(false);}}>שמור חוק</button>
+                    <div style={{display:"flex",gap:8}}>
+                      <button className="add-btn" style={{flex:1}} onClick={()=>{if(!newRule.sender&&!newRule.subject)return; saveEmailRules([...emailRules,{id:uid(),...newRule}]); setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false}); setShowNewRule(false);}}>שמור חוק</button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1254,7 +1309,7 @@ export default function App() {
                     {bubbles.length>0&&(
                       <div style={{display:"flex",flexWrap:"wrap",gap:6,background:"white",borderRadius:14,padding:"14px",boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
                         {bubbles.slice(0,4).map(b=>{
-                          const fill=b.type==="ai"?"#ede0ff":"#d6f0ff";
+                          const userColors=['#d6f0ff','#c8f0e4','#d0ecd8','#bde8f8','#cceef0']; const aiColors=['#ede0ff','#fde8f0','#f5e0ff','#ffd8e8','#ffe4d8']; const palette=b.type==="ai"?aiColors:userColors; const fill=palette[(b.id.charCodeAt(0)||0)%palette.length];
                           const col=b.type==="ai"?"#7c5cb8":"#1a7a9a";
                           return(
                             <div key={b.id} style={{position:"relative",flexShrink:0}}>
@@ -1380,7 +1435,7 @@ export default function App() {
                     {/* Bubbles */}
                     <div style={{display:"flex",flexWrap:"wrap",gap:12,justifyContent:"center"}}>
                       {(openProject.bubbles||[]).map(b=>{
-                        const fill=b.type==="ai"?"#ede0ff":"#d6f0ff";
+                        const userColors=['#d6f0ff','#c8f0e4','#d0ecd8','#bde8f8','#cceef0']; const aiColors=['#ede0ff','#fde8f0','#f5e0ff','#ffd8e8','#ffe4d8']; const palette=b.type==="ai"?aiColors:userColors; const fill=palette[(b.id.charCodeAt(0)||0)%palette.length];
                         const col=b.type==="ai"?"#7c5cb8":"#1a7a9a";
                         return(
                         <div key={b.id} style={{position:"relative",cursor:"pointer",flexShrink:0}} title="לחצי למחיקה" onClick={()=>deleteBubble(openProject.id,b.id)}>
