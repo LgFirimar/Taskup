@@ -381,31 +381,33 @@ export default function App() {
   const connectGmail = () => {
     const clientId = gmailClientId.trim();
     if (!clientId) { setShowClientIdInput(true); return; }
-    const scope = "https://www.googleapis.com/auth/gmail.readonly";
-    const redirect = window.location.origin;
-    const state = Math.random().toString(36).slice(2);
-    sessionStorage.setItem("oauth_state", state);
-    const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirect)}&response_type=token&scope=${encodeURIComponent(scope)}&state=${state}`;
-    window.location.href = url;
+
+    // Load Google Identity Services script if not already loaded
+    const initGIS = () => {
+      const client = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: "https://www.googleapis.com/auth/gmail.readonly",
+        callback: (response) => {
+          if (response.access_token) {
+            localStorage.setItem("gmail_token", response.access_token);
+            setGmailToken(response.access_token);
+          }
+        },
+      });
+      client.requestAccessToken();
+    };
+
+    if (window.google?.accounts?.oauth2) {
+      initGIS();
+    } else {
+      const script = document.createElement("script");
+      script.src = "https://accounts.google.com/gsi/client";
+      script.onload = initGIS;
+      document.head.appendChild(script);
+    }
   };
 
   const disconnectGmail = () => { setGmailToken(null); localStorage.removeItem("gmail_token"); setEmailSummaries([]); };
-
-  // Handle OAuth redirect callback
-  useEffect(() => {
-    const hash = window.location.hash;
-    if (hash.includes("access_token")) {
-      const params = new URLSearchParams(hash.slice(1));
-      const token = params.get("access_token");
-      const state = params.get("state");
-      if (token && state === sessionStorage.getItem("oauth_state")) {
-        localStorage.setItem("gmail_token", token);
-        setGmailToken(token);
-        window.history.replaceState({}, document.title, window.location.pathname);
-        setShowEmail(true);
-      }
-    }
-  }, []);
 
   const fetchAndSummarize = async () => {
     if (!gmailToken || emailRules.length === 0) return;
