@@ -254,13 +254,15 @@ export default function App() {
         }
       }
 
-      // קניות
+      // כניסה לרשימת קניות ספציפית — "רשימת סופר", "כנסי לרשימת שבת" (גם בלי "קניות")
+      const shopListQ=(text.match(/(?:רשימת|כנסי לרשימת|תכנסי לרשימת|פתחי רשימת)\s+(.+)/)||[])[1];
+      if(shopListQ){
+        const found=shopLists.find(l=>l.name.includes(shopListQ)||shopListQ.includes(l.name));
+        if(found){ setOpenListId(found.id);setOpenListType("shopping");setShowListsMenu(null); flash(`🛒 ${found.name}`); say(found.name); return true; }
+      }
+
+      // תפריט קניות כללי — "קניות"
       if(text.includes("קניות")&&!text.match(/(?:תוסיף|הוסיף|הוסיפי|תוסיפי)\s/)){
-        const shopListQ=(text.match(/(?:רשימת|כנסי לרשימת|תכנסי לרשימת|פתחי רשימת|רשימה)\s+(.+)/)||[])[1];
-        if(shopListQ){
-          const found=shopLists.find(l=>l.name.includes(shopListQ)||shopListQ.includes(l.name));
-          if(found){ setOpenListId(found.id);setOpenListType("shopping");setShowListsMenu(null); flash(`🛒 ${found.name}`); say(found.name); return true; }
-        }
         setShowListsMenu("shopping"); flash("🛒 קניות"); return true;
       }
 
