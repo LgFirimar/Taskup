@@ -136,6 +136,7 @@ export default function App() {
   const voiceModeRef = useRef("idle");
   const voiceActiveRef = useRef(false);
   const recognitionRef = useRef(null);
+  const voiceActionsRef = useRef(null);
   const openListIdRef = useRef(null);
   const openListTypeRef = useRef(null);
   const profilesRef = useRef(null);
@@ -194,54 +195,18 @@ export default function App() {
     const flash=(label,ms=2000)=>{ setVoiceLabel(label); setTimeout(()=>setVoiceLabel(""),ms); };
     const say=(text,lang="he-IL")=>{ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text); u.lang=lang; speechSynthesis.speak(u); };
 
-    const executeCommand=(text)=>{
-      if(text.includes("קניות")){ setShowListsMenu("shopping"); flash("🛒 קניות"); return true; }
-      if(text.includes("פתקים")||text.includes("פתק")){ setShowListsMenu("notes"); flash("📝 פתקים"); return true; }
-      if(text.includes("סגור")||text.includes("חזרה")){ setOpenListId(null); setOpenListType(null); setShowListsMenu(null); flash("סגור"); return true; }
-      const enterMatch=text.match(/(?:תכנס|פתח|עבור)\s+(?:ל)?(.+)/);
-      if(enterMatch){
-        const query=enterMatch[1].trim();
-        const p=profilesRef.current[Object.keys(profilesRef.current)[0]];
-        const allLists=[...(p?.shopping||[]).map(l=>({...l,type:"shopping"})),...(p?.notes||[]).map(l=>({...l,type:"notes"}))];
-        const found=allLists.find(l=>l.name.includes(query)||query.includes(l.name));
-        if(found){ setOpenListId(found.id); setOpenListType(found.type); setShowListsMenu(null); flash(`פותח: ${found.name}`); }
-        else flash(`לא נמצא: ${query}`,3000);
-        return true;
-      }
-      const addMatch=text.match(/(?:תוסיף|הוסף|הוסיפי)\s+(.+)/);
-      if(addMatch&&openListIdRef.current&&openListTypeRef.current==="shopping"){
-        const item=addMatch[1].trim();
-        const lid=openListIdRef.current;
-        setProfiles(prev=>{ const pid=Object.keys(prev)[0]; return {...prev,[pid]:{...prev[pid],shopping:(prev[pid].shopping||[]).map(l=>l.id===lid?{...l,items:[...l.items,{id:uid(),text:item}]}:l)}}; });
-        flash(`נוסף: ${item}`);
-        return true;
-      }
-      if((text.includes("הקרא")||text.includes("מה יש"))&&openListIdRef.current){
-        const pid=Object.keys(profilesRef.current)[0];
-        const list=(profilesRef.current[pid]?.shopping||[]).find(l=>l.id===openListIdRef.current);
-        if(list?.items?.length){ const u=new SpeechSynthesisUtterance(list.items.map(i=>i.text).join(", ")); u.lang="he-IL"; speechSynthesis.speak(u); flash(`קורא ${list.items.length} פריטים`); }
-        return true;
-      }
-      return false;
-    };
-
     r.onresult=(e)=>{
       const result=e.results[e.results.length-1];
       const text=result[0].transcript.trim().toLowerCase();
       setVoiceDebug(text);
       if(voiceModeRef.current!=="listening") return;
-      // Execute on interim if a known keyword is detected, or on final
-      const hasKeyword=/קניות|פתקים|פתק|סגור|חזרה|תוסיף|הוסף|הוסיפי|תכנס|פתח|עבור|הקרא|מה יש/.test(text);
+      const hasKeyword=/קניות|פתקים|פתק|סגור|חזרה|תוסיף|הוסף|הוסיפי|תכנס|פתח|עבור|הקרא|מה יש|משימה|תזכורת|סמני|סיימתי|כנסי|לשוני/.test(text);
       if(!result.isFinal && !hasKeyword) return;
-      const executed=executeCommand(text);
+      const va=voiceActionsRef.current;
+      const executed=va?.execute(text);
       if(executed||result.isFinal){
         setVoiceDebug("");
-        if(!executed){
-          flash(`לא הבנתי: "${text}"`,3000);
-          voiceModeRef.current="idle";
-          setVoiceState("idle");
-        }
-        // If command executed — stay in listening mode for follow-up commands
+        if(!executed){ va?.flash(`לא הבנתי: "${text}"`,3000); voiceModeRef.current="idle"; setVoiceState("idle"); }
       }
     };
 
@@ -747,6 +712,129 @@ export default function App() {
         )}
       </div>
     );
+  };
+
+  // ── Voice actions — updated every render so closures are always fresh ────────
+  voiceActionsRef.current = {
+    flash:(label,ms=2000)=>{ setVoiceLabel(label); setTimeout(()=>setVoiceLabel(""),ms); },
+    say:(text,lang="he-IL")=>{ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text); u.lang=lang; speechSynthesis.speak(u); },
+    execute:(text)=>{
+      const va=voiceActionsRef.current;
+      const prof=profiles[activeProfileId]||{};
+      const shopLists=prof.shopping||[];
+      const noteLists=prof.notes||[];
+      const curCtx=currentSubtab||currentTab;
+
+      // ── סגור / חזרה ──────────────────────────────────────────────────────────
+      if(text.includes("סגור")||text.includes("חזרה")||text.includes("אחורה")){
+        setOpenListId(null);setOpenListType(null);setShowListsMenu(null);
+        va.flash("סגור"); return true;
+      }
+
+      // ── מעבר בין לשוניות: "ליאור" / "לשונית ילדים" / "עברי לילדים" ──────────
+      const tabQ=(text.match(/(?:לשונייה|לשונית|עברי ל|תעברי ל|כנסי ל|תכנסי ל)\s*(.+)/)||[])[1]||null;
+      const tabByName=tabs.find(t=>text===t.label.toLowerCase()||text.includes(t.label.toLowerCase())||t.label.toLowerCase().includes(text));
+      const tabTarget=tabQ?tabs.find(t=>t.label.includes(tabQ)||tabQ.includes(t.label)):tabByName;
+      if(tabTarget&&!text.match(/(?:קניות|פתקים|פתק|תוסיף|הוסיף|משימה|תזכורת)/)){
+        setActiveTab(tabTarget.id);setActiveSubtab(null);
+        va.flash(`📑 ${tabTarget.label}`); va.say(tabTarget.label); return true;
+      }
+
+      // ── קניות — תפריט ────────────────────────────────────────────────────────
+      if(text==="קניות"||text==="פתחי קניות"||text==="תפריט קניות"){
+        setShowListsMenu("shopping"); va.flash("🛒 קניות"); return true;
+      }
+
+      // ── כניסה לרשימת קניות ספציפית ──────────────────────────────────────────
+      const shopListQ=(text.match(/(?:רשימת|רשימה של|כנסי לרשימת|תכנסי לרשימת|פתחי רשימת)\s*(.+)/)||[])[1];
+      if(shopListQ){
+        const found=shopLists.find(l=>l.name.includes(shopListQ)||shopListQ.includes(l.name));
+        if(found){ setOpenListId(found.id);setOpenListType("shopping");setShowListsMenu(null); va.flash(`🛒 ${found.name}`); va.say(found.name); return true; }
+      }
+
+      // ── הוספת פריט לרשימת קניות פתוחה ───────────────────────────────────────
+      const addItemQ=(text.match(/(?:תוסיפי|הוסיפי|הוסף|תוסיף)\s+(.+)/)||[])[1];
+      if(addItemQ&&openListIdRef.current&&openListTypeRef.current==="shopping"){
+        const lid=openListIdRef.current;
+        setProfiles(prev=>{const pid=Object.keys(prev)[0];return{...prev,[pid]:{...prev[pid],shopping:(prev[pid].shopping||[]).map(l=>l.id===lid?{...l,items:[...l.items,{id:uid(),text:addItemQ.trim()}]}:l)}};});
+        va.flash(`נוסף: ${addItemQ.trim()}`); va.say(addItemQ.trim()); return true;
+      }
+
+      // ── פתקים — תפריט ────────────────────────────────────────────────────────
+      if(text==="פתקים"||text==="פתחי פתקים"){
+        setShowListsMenu("notes"); va.flash("📝 פתקים"); return true;
+      }
+
+      // ── כניסה לפתק / יצירת פתק חדש ──────────────────────────────────────────
+      const noteQ=(text.match(/(?:פתחי פתק|פתק\s+|כנסי לפתק|תכנסי לפתק)\s*(.+)/)||[])[1];
+      if(noteQ){
+        let found=noteLists.find(n=>n.name.includes(noteQ)||noteQ.includes(n.name));
+        if(!found){
+          const newNote={id:uid(),name:noteQ.trim(),content:""};
+          updateProfile(p=>({...p,notes:[...(p.notes||[]),newNote]}));
+          setOpenListId(newNote.id);setOpenListType("notes");setShowListsMenu(null);
+          va.flash(`📝 פתק חדש: ${noteQ.trim()}`); va.say("פתק חדש"); return true;
+        }
+        setOpenListId(found.id);setOpenListType("notes");setShowListsMenu(null);
+        va.flash(`📝 ${found.name}`); va.say(found.name); return true;
+      }
+
+      // ── כתיבה לפתק פתוח ──────────────────────────────────────────────────────
+      if(openListTypeRef.current==="notes"&&openListIdRef.current){
+        const writeQ=(text.match(/(?:תכתבי|כתבי|הוסיפי|תוסיפי)\s+(.+)/)||[])[1];
+        if(writeQ){
+          const nid=openListIdRef.current;
+          updateProfile(p=>({...p,notes:(p.notes||[]).map(n=>n.id===nid?{...n,content:(n.content?n.content+"\n":"")+writeQ.trim()}:n)}));
+          va.flash(`✍️ ${writeQ.trim()}`); va.say("נוסף"); return true;
+        }
+      }
+
+      // ── הוספת משימה ──────────────────────────────────────────────────────────
+      const taskQ=(text.match(/(?:משימה|הוסיפי משימה|תוסיפי משימה|משימה חדשה)[:\s]+(.+)/)||[])[1];
+      if(taskQ&&curCtx){
+        setTabs(prev=>prev.map(t=>{
+          if(t.id!==activeTab)return t;
+          const item={id:uid(),text:taskQ.trim(),done:false,createdAt:today(),subtasks:[],priority:null};
+          if(currentSubtab)return{...t,subtabs:t.subtabs.map(s=>s.id===activeSubtab?{...s,tasks:[...s.tasks,item]}:s)};
+          return{...t,tasks:[...t.tasks,item]};
+        }));
+        va.flash(`✓ ${taskQ.trim()}`); va.say("נוסף"); return true;
+      }
+
+      // ── הוספת תזכורת ─────────────────────────────────────────────────────────
+      const remQ=(text.match(/(?:תזכורת|הוסיפי תזכורת|תוסיפי תזכורת|תזכורת חדשה)[:\s]+(.+)/)||[])[1];
+      if(remQ&&curCtx){
+        setTabs(prev=>prev.map(t=>{
+          if(t.id!==activeTab)return t;
+          const item={id:uid(),text:remQ.trim(),done:false,createdAt:today(),startDate:null,endDate:null,alertDate:null};
+          if(currentSubtab)return{...t,subtabs:t.subtabs.map(s=>s.id===activeSubtab?{...s,reminders:[...s.reminders,item]}:s)};
+          return{...t,reminders:[...t.reminders,item]};
+        }));
+        va.flash(`🔔 ${remQ.trim()}`); va.say("נוסף"); return true;
+      }
+
+      // ── סימון ביצוע ──────────────────────────────────────────────────────────
+      const doneQ=(text.match(/(?:סמני|סיימתי|בוצע|בוצעה)\s+(.+)/)||[])[1];
+      if(doneQ){
+        const query=doneQ.replace(/\s*כבוצע[ת]?\s*$/,"").trim();
+        const allItems=[
+          ...(curCtx?.tasks||[]).filter(t=>!t.done).map(t=>({...t,itype:"task"})),
+          ...(curCtx?.reminders||[]).filter(r=>!r.done).map(r=>({...r,itype:"reminder"})),
+        ];
+        const found=allItems.find(i=>i.text.includes(query)||query.split(" ").some(w=>w.length>2&&i.text.includes(w)));
+        if(found){ smartUpdateItem(found.itype,found.id,i=>({...i,done:true})); va.flash(`✓ ${found.text}`); va.say("בוצע"); return true; }
+        va.flash(`לא נמצא: ${query}`,3000); return true;
+      }
+
+      // ── קריאת רשימת קניות ────────────────────────────────────────────────────
+      if((text.includes("הקרא")||text.includes("מה יש"))&&openListIdRef.current){
+        const pid=Object.keys(profilesRef.current)[0];
+        const list=(profilesRef.current[pid]?.shopping||[]).find(l=>l.id===openListIdRef.current);
+        if(list?.items?.length){ const u=new SpeechSynthesisUtterance(list.items.map(i=>i.text).join(", ")); u.lang="he-IL"; speechSynthesis.speak(u); va.flash(`קורא ${list.items.length} פריטים`); return true; }
+      }
+
+      return false;
+    },
   };
 
   const CSS = `
@@ -1542,13 +1630,13 @@ export default function App() {
                 voiceActiveRef.current=true;
                 sessionStorage.setItem("voice_on","1");
                 voiceModeRef.current="listening";
-                try{ r.start(); setVoiceState("listening"); say("כן?"); }catch{}
+                try{ r.start(); setVoiceState("listening"); voiceActionsRef.current?.say("כן?"); }catch{}
               } else if(voiceModeRef.current==="listening"){
                 // Already listening — pause
                 voiceModeRef.current="idle"; setVoiceState("idle");
               } else {
                 // Idle — enter listening
-                voiceModeRef.current="listening"; setVoiceState("listening"); say("כן?");
+                voiceModeRef.current="listening"; setVoiceState("listening"); voiceActionsRef.current?.say("כן?");
               }
             }}
           >
