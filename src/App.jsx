@@ -236,9 +236,12 @@ export default function App() {
       const executed=executeCommand(text);
       if(executed||result.isFinal){
         setVoiceDebug("");
-        voiceModeRef.current="idle";
-        setVoiceState("idle");
-        if(!executed) flash(`לא הבנתי: "${text}"`,3000);
+        if(!executed){
+          flash(`לא הבנתי: "${text}"`,3000);
+          voiceModeRef.current="idle";
+          setVoiceState("idle");
+        }
+        // If command executed — stay in listening mode for follow-up commands
       }
     };
 
@@ -1530,7 +1533,7 @@ export default function App() {
         {/* Voice indicator — always shown when SR available; tap to activate on first use */}
         {voiceAvail&&(
           <div
-            style={{position:"fixed",bottom:90,right:20,zIndex:160,display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer"}}
+            style={{position:"fixed",bottom:90,right:20,zIndex:250,display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer"}}
             onClick={()=>{
               const r=recognitionRef.current;
               if(!r) return;
