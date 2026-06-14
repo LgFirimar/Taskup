@@ -192,13 +192,17 @@ export default function App() {
 
     const flash=(label,ms=2000)=>{ setVoiceLabel(label); setTimeout(()=>setVoiceLabel(""),ms); };
 
+    const say=(text,lang="he-IL")=>{ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text); u.lang=lang; speechSynthesis.speak(u); };
+
     r.onresult=(e)=>{
       const text=e.results[e.results.length-1][0].transcript.trim().toLowerCase();
-      if(text.includes("taskup")||text.includes("טאסק אפ")||text.includes("טסקאפ")){
+      const isWake=text.includes("taskup")||text.includes("task up")||text.includes("טאסק אפ")||text.includes("טסקאפ")||text.includes("טסק אפ")||text.includes("טאסקאפ");
+      if(isWake){
         voiceModeRef.current="listening";
         setVoiceState("listening");
-        flash("מאזין להוראות...",4000);
-        setTimeout(()=>{ if(voiceModeRef.current==="listening"){ voiceModeRef.current="idle"; setVoiceState("idle"); }},5000);
+        flash("מאזין להוראות...",6000);
+        say("כן?");
+        setTimeout(()=>{ if(voiceModeRef.current==="listening"){ voiceModeRef.current="idle"; setVoiceState("idle"); }},8000);
         return;
       }
       if(voiceModeRef.current!=="listening") return;
