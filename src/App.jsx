@@ -131,6 +131,7 @@ export default function App() {
   // ── Voice control ─────────────────────────────────────────────────────────
   const [voiceState,setVoiceState] = useState("off"); // "off"|"idle"|"listening"|"processing"
   const [voiceLabel,setVoiceLabel] = useState("");
+  const [voiceDebug,setVoiceDebug] = useState("");
   const [voiceAvail,setVoiceAvail] = useState(false);
   const voiceModeRef = useRef("idle");
   const voiceActiveRef = useRef(false);
@@ -187,15 +188,19 @@ export default function App() {
     const r=new SR();
     r.lang="he-IL";
     r.continuous=true;
-    r.interimResults=false;
+    r.interimResults=true;
     recognitionRef.current=r;
 
     const flash=(label,ms=2000)=>{ setVoiceLabel(label); setTimeout(()=>setVoiceLabel(""),ms); };
-
     const say=(text,lang="he-IL")=>{ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text); u.lang=lang; speechSynthesis.speak(u); };
 
     r.onresult=(e)=>{
-      const text=e.results[e.results.length-1][0].transcript.trim().toLowerCase();
+      const result=e.results[e.results.length-1];
+      const text=result[0].transcript.trim().toLowerCase();
+      setVoiceDebug(text); // show raw transcript for debugging
+      if(!result.isFinal) return; // wait for final transcription
+      setVoiceDebug("");
+
       const isWake=text.includes("taskup")||text.includes("task up")||text.includes("טאסק אפ")||text.includes("טסקאפ")||text.includes("טסק אפ")||text.includes("טאסקאפ");
       if(isWake){
         voiceModeRef.current="listening";
@@ -253,7 +258,7 @@ export default function App() {
       flash(`לא הבנתי: "${text}"`,3000);
     };
 
-    r.onerror=()=>{};
+    r.onerror=(e)=>{ flash(`שגיאת מיקרופון: ${e.error}`,4000); };
     r.onend=()=>{ if(voiceActiveRef.current){ try{ r.start(); }catch{} } };
 
     setVoiceAvail(true);
@@ -1549,6 +1554,7 @@ export default function App() {
             }:undefined}
           >
             {voiceLabel&&<div style={{background:"rgba(0,0,0,0.75)",color:"white",fontSize:12,padding:"5px 12px",borderRadius:20,fontFamily:"'Heebo',sans-serif",direction:"rtl",whiteSpace:"nowrap",maxWidth:220,textAlign:"center"}}>{voiceLabel}</div>}
+            {voiceDebug&&!voiceLabel&&<div style={{background:"rgba(80,80,200,0.85)",color:"white",fontSize:11,padding:"4px 10px",borderRadius:20,fontFamily:"'Heebo',sans-serif",direction:"rtl",maxWidth:220,textAlign:"center",fontStyle:"italic"}}>{voiceDebug}</div>}
             <div style={{width:42,height:42,borderRadius:"50%",background:voiceState==="listening"?"#ef5350":voiceState==="processing"?"#ffa726":"white",border:"2px solid "+(voiceState==="listening"?"#ef5350":voiceState==="processing"?"#ffa726":voiceState==="off"?"#dde":"#dde"),display:"flex",alignItems:"center",justifyContent:"center",boxShadow:voiceState==="listening"?"0 0 0 6px rgba(239,83,80,0.2)":"0 2px 8px rgba(0,0,0,0.1)",transition:"all 0.3s",animation:voiceState==="listening"?"voicePulse 1s ease-in-out infinite":"none",opacity:voiceState==="off"?0.45:1}}>
               <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
                 <rect x="6" y="1" width="6" height="10" rx="3" fill={voiceState==="listening"?"white":"#aab"}/>
