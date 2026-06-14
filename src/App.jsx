@@ -917,9 +917,9 @@ export default function App() {
     /* ── FAB & side pills ── */
     .fab{position:fixed;bottom:26px;left:26px;width:52px;height:52px;border-radius:50%;border:none;color:white;font-size:26px;cursor:pointer;box-shadow:0 6px 20px color-mix(in srgb,var(--accent) 45%,transparent);z-index:150;display:flex;align-items:center;justify-content:center;transition:transform 0.15s;background:var(--accent);}
     .fab:hover{transform:scale(1.08);}
-    .side-pill{position:fixed;left:26px;border-radius:100px;border:none;padding:8px 16px 8px 12px;cursor:pointer;font-family:'Heebo',sans-serif;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;box-shadow:0 3px 12px rgba(0,0,0,0.12);z-index:150;transition:all 0.15s;background:white;color:#555;}
+    .side-pill{position:fixed;right:26px;border-radius:100px;border:none;padding:8px 16px 8px 12px;cursor:pointer;font-family:'Heebo',sans-serif;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;box-shadow:0 3px 12px rgba(0,0,0,0.12);z-index:150;transition:all 0.15s;background:white;color:#555;}
     .side-pill.active-pill{background:var(--accent);color:white;}
-    .side-pill:hover{transform:translateX(2px);}
+    .side-pill:hover{transform:translateX(-2px);}
 
     /* ── Section header ── */
     .section-header{display:flex;align-items:center;margin-bottom:12px;gap:8px;}
@@ -1537,7 +1537,7 @@ export default function App() {
         {/* Voice indicator — always shown when SR available; tap to activate on first use */}
         {voiceAvail&&(
           <div
-            style={{position:"fixed",bottom:90,right:20,zIndex:160,display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:voiceState==="off"?"pointer":"default"}}
+            style={{position:"fixed",bottom:80,left:26,zIndex:160,display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:voiceState==="off"?"pointer":"default"}}
             onClick={voiceState==="off"?()=>{
               voiceActiveRef.current=true;
               sessionStorage.setItem("voice_on","1");
