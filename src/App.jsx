@@ -194,35 +194,10 @@ export default function App() {
     const flash=(label,ms=2000)=>{ setVoiceLabel(label); setTimeout(()=>setVoiceLabel(""),ms); };
     const say=(text,lang="he-IL")=>{ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text); u.lang=lang; speechSynthesis.speak(u); };
 
-    r.onresult=(e)=>{
-      const result=e.results[e.results.length-1];
-      const text=result[0].transcript.trim().toLowerCase();
-      setVoiceDebug(text);
-
-      // Wake word: check on every result (interim too) — critical for iOS Safari
-      const isWake=text.includes("taskup")||text.includes("task up")||text.includes("טאסק אפ")||text.includes("טסקאפ")||text.includes("טסק אפ")||text.includes("טאסקאפ");
-      if(isWake && voiceModeRef.current!=="listening"){
-        setVoiceDebug("");
-        voiceModeRef.current="listening";
-        setVoiceState("listening");
-        flash("מאזין להוראות...",6000);
-        say("כן?");
-        setTimeout(()=>{ if(voiceModeRef.current==="listening"){ voiceModeRef.current="idle"; setVoiceState("idle"); }},8000);
-        return;
-      }
-
-      // Commands: wait for final result
-      if(!result.isFinal) return;
-      setVoiceDebug("");
-      if(voiceModeRef.current!=="listening") return;
-      voiceModeRef.current="idle"; setVoiceState("idle");
-
-      // Navigation commands
-      if(text.includes("קניות")){ setShowListsMenu("shopping"); flash("🛒 קניות"); return; }
-      if(text.includes("פתקים")||text.includes("פתק")){ setShowListsMenu("notes"); flash("📝 פתקים"); return; }
-      if(text.includes("סגור")||text.includes("חזרה")){ setOpenListId(null); setOpenListType(null); setShowListsMenu(null); flash("סגור"); return; }
-
-      // Open specific list: "תכנס ל[name]"
+    const executeCommand=(text)=>{
+      if(text.includes("קניות")){ setShowListsMenu("shopping"); flash("🛒 קניות"); return true; }
+      if(text.includes("פתקים")||text.includes("פתק")){ setShowListsMenu("notes"); flash("📝 פתקים"); return true; }
+      if(text.includes("סגור")||text.includes("חזרה")){ setOpenListId(null); setOpenListType(null); setShowListsMenu(null); flash("סגור"); return true; }
       const enterMatch=text.match(/(?:תכנס|פתח|עבור)\s+(?:ל)?(.+)/);
       if(enterMatch){
         const query=enterMatch[1].trim();
@@ -231,35 +206,40 @@ export default function App() {
         const found=allLists.find(l=>l.name.includes(query)||query.includes(l.name));
         if(found){ setOpenListId(found.id); setOpenListType(found.type); setShowListsMenu(null); flash(`פותח: ${found.name}`); }
         else flash(`לא נמצא: ${query}`,3000);
-        return;
+        return true;
       }
-
-      // Add item: "תוסיף [item]"
       const addMatch=text.match(/(?:תוסיף|הוסף|הוסיפי)\s+(.+)/);
       if(addMatch&&openListIdRef.current&&openListTypeRef.current==="shopping"){
         const item=addMatch[1].trim();
         const lid=openListIdRef.current;
-        setProfiles(prev=>{
-          const pid=Object.keys(prev)[0];
-          return {...prev,[pid]:{...prev[pid],shopping:(prev[pid].shopping||[]).map(l=>l.id===lid?{...l,items:[...l.items,{id:uid(),text:item}]}:l)}};
-        });
+        setProfiles(prev=>{ const pid=Object.keys(prev)[0]; return {...prev,[pid]:{...prev[pid],shopping:(prev[pid].shopping||[]).map(l=>l.id===lid?{...l,items:[...l.items,{id:uid(),text:item}]}:l)}}; });
         flash(`נוסף: ${item}`);
-        return;
+        return true;
       }
-
-      // Read list items: "הקרא" / "מה יש"
       if((text.includes("הקרא")||text.includes("מה יש"))&&openListIdRef.current){
         const pid=Object.keys(profilesRef.current)[0];
         const list=(profilesRef.current[pid]?.shopping||[]).find(l=>l.id===openListIdRef.current);
-        if(list?.items?.length){
-          const utter=new SpeechSynthesisUtterance(list.items.map(i=>i.text).join(", "));
-          utter.lang="he-IL"; speechSynthesis.speak(utter);
-          flash(`קורא ${list.items.length} פריטים`);
-        }
-        return;
+        if(list?.items?.length){ const u=new SpeechSynthesisUtterance(list.items.map(i=>i.text).join(", ")); u.lang="he-IL"; speechSynthesis.speak(u); flash(`קורא ${list.items.length} פריטים`); }
+        return true;
       }
+      return false;
+    };
 
-      flash(`לא הבנתי: "${text}"`,3000);
+    r.onresult=(e)=>{
+      const result=e.results[e.results.length-1];
+      const text=result[0].transcript.trim().toLowerCase();
+      setVoiceDebug(text);
+      if(voiceModeRef.current!=="listening") return;
+      // Execute on interim if a known keyword is detected, or on final
+      const hasKeyword=/קניות|פתקים|פתק|סגור|חזרה|תוסיף|הוסף|הוסיפי|תכנס|פתח|עבור|הקרא|מה יש/.test(text);
+      if(!result.isFinal && !hasKeyword) return;
+      const executed=executeCommand(text);
+      if(executed||result.isFinal){
+        setVoiceDebug("");
+        voiceModeRef.current="idle";
+        setVoiceState("idle");
+        if(!executed) flash(`לא הבנתי: "${text}"`,3000);
+      }
     };
 
     r.onerror=(e)=>{ flash(`שגיאת מיקרופון: ${e.error}`,4000); };
@@ -1550,12 +1530,24 @@ export default function App() {
         {/* Voice indicator — always shown when SR available; tap to activate on first use */}
         {voiceAvail&&(
           <div
-            style={{position:"fixed",bottom:90,right:20,zIndex:160,display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:voiceState==="off"?"pointer":"default"}}
-            onClick={voiceState==="off"?()=>{
-              voiceActiveRef.current=true;
-              sessionStorage.setItem("voice_on","1");
-              try{ recognitionRef.current?.start(); setVoiceState("idle"); }catch{}
-            }:undefined}
+            style={{position:"fixed",bottom:90,right:20,zIndex:160,display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer"}}
+            onClick={()=>{
+              const r=recognitionRef.current;
+              if(!r) return;
+              if(voiceState==="off"){
+                // First use — start recognition + enter listening immediately
+                voiceActiveRef.current=true;
+                sessionStorage.setItem("voice_on","1");
+                voiceModeRef.current="listening";
+                try{ r.start(); setVoiceState("listening"); say("כן?"); }catch{}
+              } else if(voiceModeRef.current==="listening"){
+                // Already listening — pause
+                voiceModeRef.current="idle"; setVoiceState("idle");
+              } else {
+                // Idle — enter listening
+                voiceModeRef.current="listening"; setVoiceState("listening"); say("כן?");
+              }
+            }}
           >
             {voiceLabel&&<div style={{background:"rgba(0,0,0,0.75)",color:"white",fontSize:12,padding:"5px 12px",borderRadius:20,fontFamily:"'Heebo',sans-serif",direction:"rtl",whiteSpace:"nowrap",maxWidth:220,textAlign:"center"}}>{voiceLabel}</div>}
             {voiceDebug&&!voiceLabel&&<div style={{background:"rgba(80,80,200,0.85)",color:"white",fontSize:11,padding:"4px 10px",borderRadius:20,fontFamily:"'Heebo',sans-serif",direction:"rtl",maxWidth:220,textAlign:"center",fontStyle:"italic"}}>{voiceDebug}</div>}
@@ -1566,7 +1558,9 @@ export default function App() {
                 <line x1="9" y1="15" x2="9" y2="17" stroke={voiceState==="listening"?"white":"#aab"} strokeWidth="1.5" strokeLinecap="round"/>
               </svg>
             </div>
-            {voiceState==="off"&&<div style={{fontSize:9,color:"#bbb",fontFamily:"'Heebo',sans-serif",whiteSpace:"nowrap"}}>הפעל קול</div>}
+            <div style={{fontSize:9,color:voiceState==="listening"?"#ef5350":"#bbb",fontFamily:"'Heebo',sans-serif",whiteSpace:"nowrap"}}>
+              {voiceState==="off"?"הפעל קול":voiceState==="listening"?"מאזין...":"הקש לדבר"}
+            </div>
           </div>
         )}
 
