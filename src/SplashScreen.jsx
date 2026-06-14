@@ -61,7 +61,9 @@ export default function SplashScreen({ onComplete }) {
       background: "#c8e5d5",
       display: "flex", alignItems: "center", justifyContent: "center",
       animation: bursting ? "bgDissolve 0.45s ease-out forwards" : "none",
-    }}>
+      cursor: "pointer",
+    }}
+    onClick={done}>
       <style>{KEYFRAMES}</style>
 
       <video

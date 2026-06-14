@@ -131,7 +131,9 @@ export default function App() {
   // ── Voice control ─────────────────────────────────────────────────────────
   const [voiceState,setVoiceState] = useState("off"); // "off"|"idle"|"listening"|"processing"
   const [voiceLabel,setVoiceLabel] = useState("");
+  const [voiceAvail,setVoiceAvail] = useState(false);
   const voiceModeRef = useRef("idle");
+  const voiceActiveRef = useRef(false);
   const recognitionRef = useRef(null);
   const openListIdRef = useRef(null);
   const openListTypeRef = useRef(null);
@@ -248,10 +250,15 @@ export default function App() {
     };
 
     r.onerror=()=>{};
-    r.onend=()=>{ try{ r.start(); }catch{} };
+    r.onend=()=>{ if(voiceActiveRef.current){ try{ r.start(); }catch{} } };
 
-    try{ r.start(); setVoiceState("idle"); }catch{}
-    return ()=>{ try{ r.stop(); }catch{} };
+    setVoiceAvail(true);
+    // Auto-start only if user already opted in this session
+    if(sessionStorage.getItem("voice_on")){
+      voiceActiveRef.current=true;
+      try{ r.start(); setVoiceState("idle"); }catch{}
+    }
+    return ()=>{ voiceActiveRef.current=false; try{ r.stop(); }catch{} };
   },[showSplash]);
 
   // ── Derived tabs ──────────────────────────────────────────────────────────
@@ -1087,7 +1094,7 @@ export default function App() {
 
             {/* Shopping: items list */}
             {openListType==="shopping"&&<>
-              <div style={{flex:1,overflowY:"auto",padding:"8px 20px"}}>
+              <div style={{flex:1,overflowY:"auto",padding:"8px 20px 100px"}}>
                 {(!openList.items||openList.items.length===0)&&<div style={{color:"#ccc",fontSize:14,textAlign:"center",padding:"40px 0"}}>רשימה ריקה — הוסיפי פריטים למטה</div>}
                 {(openList.items||[]).map(item=>(
                   <div key={item.id} className="list-item-row">
@@ -1102,7 +1109,8 @@ export default function App() {
                   </div>
                 ))}
               </div>
-              <div style={{padding:"12px 20px 28px",borderTop:"1px solid #ebebea",background:"white"}}>
+              {/* Fixed add bar — stays above keyboard on mobile */}
+              <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"12px 20px",paddingBottom:"calc(12px + env(safe-area-inset-bottom, 0px))",borderTop:"1px solid #ebebea",background:"white",zIndex:201}}>
                 <div style={{fontSize:11,color:"#bbb",marginBottom:6,fontWeight:600}}>פסיקים בין פריטים, או משפט חופשי</div>
                 <div style={{display:"flex",gap:10}}>
                   <input autoFocus className="plain-input" style={{flex:1,fontSize:15}} placeholder='חלב, ביצים, לחם  או  "תקני גם יוגורט"' value={listItemInput} onChange={e=>setListItemInput(e.target.value)}
@@ -1508,24 +1516,43 @@ export default function App() {
           </div>
         )}
 
-        {/* Side pills */}
-        <button className={`side-pill${showListsMenu==="shopping"?" active-pill":""}`} style={{bottom:216}} onClick={()=>setShowListsMenu(showListsMenu==="shopping"?null:"shopping")}>🛒 קניות</button>
-        <button className={`side-pill${showListsMenu==="notes"?" active-pill":""}`} style={{bottom:172}} onClick={()=>setShowListsMenu(showListsMenu==="notes"?null:"notes")}>📝 פתקים</button>
-        <button className={`side-pill${(showProjects||openProjectId)?" active-pill":""}`} style={{bottom:128}} onClick={()=>{setShowProjects(true);setOpenProjectId(null);}}>🗂 פרויקטים</button>
-        <button className={`side-pill${showEmail?" active-pill":""}`} style={{bottom:84}} onClick={()=>setShowEmail(true)}>📧 מייל</button>
+        {/* Side pills — icon-only circle when closed, full pill when open */}
+        {[
+          {key:"shopping", icon:"🛒", label:"קניות",     bottom:216, active:showListsMenu==="shopping",        fn:()=>setShowListsMenu(showListsMenu==="shopping"?null:"shopping")},
+          {key:"notes",    icon:"📝", label:"פתקים",     bottom:172, active:showListsMenu==="notes",           fn:()=>setShowListsMenu(showListsMenu==="notes"?null:"notes")},
+          {key:"projects", icon:"🗂", label:"פרויקטים", bottom:128, active:!!(showProjects||openProjectId),   fn:()=>{setShowProjects(true);setOpenProjectId(null);}},
+          {key:"email",    icon:"📧", label:"מייל",      bottom:84,  active:showEmail,                         fn:()=>setShowEmail(true)},
+        ].map(({key,icon,label,bottom,active,fn})=>(
+          <button key={key}
+            className={`side-pill${active?" active-pill":""}`}
+            style={{bottom, ...(active?{}:{padding:"0",width:38,height:38,minWidth:38,justifyContent:"center",gap:0})}}
+            onClick={fn}
+          >
+            <span style={{fontSize:active?14:18}}>{icon}</span>
+            {active&&<span>{label}</span>}
+          </button>
+        ))}
         <button className="fab" style={{background:accent}} onClick={()=>setShowQuickCapture(true)}>+</button>
 
-        {/* Voice indicator */}
-        {voiceState!=="off"&&(
-          <div style={{position:"fixed",bottom:90,right:20,zIndex:160,display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+        {/* Voice indicator — always shown when SR available; tap to activate on first use */}
+        {voiceAvail&&(
+          <div
+            style={{position:"fixed",bottom:90,right:20,zIndex:160,display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:voiceState==="off"?"pointer":"default"}}
+            onClick={voiceState==="off"?()=>{
+              voiceActiveRef.current=true;
+              sessionStorage.setItem("voice_on","1");
+              try{ recognitionRef.current?.start(); setVoiceState("idle"); }catch{}
+            }:undefined}
+          >
             {voiceLabel&&<div style={{background:"rgba(0,0,0,0.75)",color:"white",fontSize:12,padding:"5px 12px",borderRadius:20,fontFamily:"'Heebo',sans-serif",direction:"rtl",whiteSpace:"nowrap",maxWidth:220,textAlign:"center"}}>{voiceLabel}</div>}
-            <div style={{width:42,height:42,borderRadius:"50%",background:voiceState==="listening"?"#ef5350":voiceState==="processing"?"#ffa726":"white",border:"2px solid "+(voiceState==="listening"?"#ef5350":voiceState==="processing"?"#ffa726":"#dde"),display:"flex",alignItems:"center",justifyContent:"center",boxShadow:voiceState==="listening"?"0 0 0 6px rgba(239,83,80,0.2)":"0 2px 8px rgba(0,0,0,0.1)",transition:"all 0.3s",animation:voiceState==="listening"?"voicePulse 1s ease-in-out infinite":"none"}}>
+            <div style={{width:42,height:42,borderRadius:"50%",background:voiceState==="listening"?"#ef5350":voiceState==="processing"?"#ffa726":"white",border:"2px solid "+(voiceState==="listening"?"#ef5350":voiceState==="processing"?"#ffa726":voiceState==="off"?"#dde":"#dde"),display:"flex",alignItems:"center",justifyContent:"center",boxShadow:voiceState==="listening"?"0 0 0 6px rgba(239,83,80,0.2)":"0 2px 8px rgba(0,0,0,0.1)",transition:"all 0.3s",animation:voiceState==="listening"?"voicePulse 1s ease-in-out infinite":"none",opacity:voiceState==="off"?0.45:1}}>
               <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
                 <rect x="6" y="1" width="6" height="10" rx="3" fill={voiceState==="listening"?"white":"#aab"}/>
                 <path d="M3 9a6 6 0 0012 0" stroke={voiceState==="listening"?"white":"#aab"} strokeWidth="1.5" strokeLinecap="round"/>
                 <line x1="9" y1="15" x2="9" y2="17" stroke={voiceState==="listening"?"white":"#aab"} strokeWidth="1.5" strokeLinecap="round"/>
               </svg>
             </div>
+            {voiceState==="off"&&<div style={{fontSize:9,color:"#bbb",fontFamily:"'Heebo',sans-serif",whiteSpace:"nowrap"}}>הפעל קול</div>}
           </div>
         )}
 
