@@ -197,12 +197,12 @@ export default function App() {
     r.onresult=(e)=>{
       const result=e.results[e.results.length-1];
       const text=result[0].transcript.trim().toLowerCase();
-      setVoiceDebug(text); // show raw transcript for debugging
-      if(!result.isFinal) return; // wait for final transcription
-      setVoiceDebug("");
+      setVoiceDebug(text);
 
+      // Wake word: check on every result (interim too) — critical for iOS Safari
       const isWake=text.includes("taskup")||text.includes("task up")||text.includes("טאסק אפ")||text.includes("טסקאפ")||text.includes("טסק אפ")||text.includes("טאסקאפ");
-      if(isWake){
+      if(isWake && voiceModeRef.current!=="listening"){
+        setVoiceDebug("");
         voiceModeRef.current="listening";
         setVoiceState("listening");
         flash("מאזין להוראות...",6000);
@@ -210,6 +210,10 @@ export default function App() {
         setTimeout(()=>{ if(voiceModeRef.current==="listening"){ voiceModeRef.current="idle"; setVoiceState("idle"); }},8000);
         return;
       }
+
+      // Commands: wait for final result
+      if(!result.isFinal) return;
+      setVoiceDebug("");
       if(voiceModeRef.current!=="listening") return;
       voiceModeRef.current="idle"; setVoiceState("idle");
 
