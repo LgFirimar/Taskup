@@ -249,7 +249,7 @@ export default function App() {
       }
 
       // מעבר לשוניות — "ליאור", "לשונית ילדים", "עברי לילדים"
-      if(!text.match(/קניות|פתקים|פתק|תוסיף|הוסיף|הוסיפי|תוסיפי|משימה|תזכורת|כתבי|תכתבי|רשימת/)){
+      if(!text.match(/קניות|פתקים|פתק|תוסיף|הוסיף|הוסיפי|תוסיפי|משימה|תזכורת|כתבי|תכתבי|רשימת|רשימה/)){
         const navMatch=text.match(/(?:לשונייה|לשונית|עברי ל|תעברי ל|כנסי ל|תכנסי ל)\s*(.+)/);
         const navTarget=navMatch?navMatch[1].trim():null;
         const tabTarget=navTarget
@@ -261,16 +261,26 @@ export default function App() {
         }
       }
 
-      // כניסה לרשימת קניות — "רשימת סופר" (מוצא או יוצר)
-      const shopListQ=(text.match(/(?:רשימת|כנסי לרשימת|תכנסי לרשימת|פתחי רשימת)\s+(.+)/)||[])[1];
-      if(shopListQ){
-        const found=shopLists.find(l=>l.name.includes(shopListQ)||shopListQ.includes(l.name));
+      // כניסה לרשימת קניות — "רשימת X" / "רשימה X" / שם הרשימה ישירות
+      const shopListPrefix=(text.match(/(?:רשימת|רשימה|כנסי לרשימת|תכנסי לרשימת|פתחי רשימת|פתחי את רשימת)\s+(.+)/)||[])[1];
+      const shopListByName=!shopListPrefix?shopLists.find(l=>l.name.length>=2&&(text.trim()===l.name.toLowerCase()||text.trim().includes(l.name.toLowerCase())||l.name.toLowerCase().includes(text.trim()))):null;
+      if(shopListPrefix||shopListByName){
+        const found=shopListPrefix
+          ?shopLists.find(l=>l.name.includes(shopListPrefix)||shopListPrefix.includes(l.name))
+          :shopListByName;
         if(found){ setOpenListId(found.id);setOpenListType("shopping");setShowListsMenu(null); flash(`🛒 ${found.name}`); say(found.name); return true; }
-        // רשימה לא קיימת — יוצר חדשה
-        const newList={id:uid(),name:shopListQ.trim(),items:[]};
-        updateProfileV(p=>({...p,shopping:[...(p.shopping||[]),newList]}));
-        setOpenListId(newList.id);setOpenListType("shopping");setShowListsMenu(null);
-        flash(`🛒 רשימה חדשה: ${shopListQ.trim()}`); say("רשימה חדשה"); return true;
+        if(shopListPrefix){
+          const newList={id:uid(),name:shopListPrefix.trim(),items:[]};
+          updateProfileV(p=>({...p,shopping:[...(p.shopping||[]),newList]}));
+          setOpenListId(newList.id);setOpenListType("shopping");setShowListsMenu(null);
+          flash(`🛒 רשימה חדשה: ${shopListPrefix.trim()}`); say("רשימה חדשה"); return true;
+        }
+      }
+
+      // רשימות קניות — "אילו רשימות" / "הצג רשימות"
+      if(text.includes("אילו רשימות")||text.includes("הצג רשימות")||text.includes("רשימות קניות")){
+        if(shopLists.length){ const u=new SpeechSynthesisUtterance(shopLists.map(l=>l.name).join(", ")); u.lang="he-IL"; speechSynthesis.speak(u); flash(shopLists.map(l=>l.name).join(" | ")); return true; }
+        flash("אין רשימות קניות",3000); return true;
       }
 
       // תפריט קניות כללי — "קניות"
