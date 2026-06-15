@@ -235,6 +235,13 @@ export default function App() {
       const curSubtab=curActiveSubtab&&curTab?curTab.subtabs.find(s=>s.id===curActiveSubtab):null;
       const curCtx=curSubtab||curTab;
 
+      // בדיקה — פקודת דיבוג
+      if(text.includes("בדיקה")){
+        const pid=activeProfileIdRef.current;
+        flash(`לשוניות: ${curTabs.length} | קניות: ${shopLists.length} | פתקים: ${noteLists.length}`,5000);
+        return true;
+      }
+
       // סגור / חזרה
       if(text.includes("סגור")||text.includes("חזרה")||text.includes("אחורה")){
         setOpenListId(null);setOpenListType(null);setShowListsMenu(null);
@@ -242,23 +249,28 @@ export default function App() {
       }
 
       // מעבר לשוניות — "ליאור", "לשונית ילדים", "עברי לילדים"
-      if(!text.match(/קניות|פתקים|פתק|תוסיף|הוסיף|הוסיפי|תוסיפי|משימה|תזכורת|כתבי|תכתבי/)){
+      if(!text.match(/קניות|פתקים|פתק|תוסיף|הוסיף|הוסיפי|תוסיפי|משימה|תזכורת|כתבי|תכתבי|רשימת/)){
         const navMatch=text.match(/(?:לשונייה|לשונית|עברי ל|תעברי ל|כנסי ל|תכנסי ל)\s*(.+)/);
         const navTarget=navMatch?navMatch[1].trim():null;
         const tabTarget=navTarget
           ?curTabs.find(t=>t.label.includes(navTarget)||navTarget.includes(t.label))
-          :curTabs.find(t=>t.label.toLowerCase()===text.trim());
+          :curTabs.find(t=>text.includes(t.label.toLowerCase())||t.label.toLowerCase().includes(text));
         if(tabTarget){
           setActiveTab(tabTarget.id);setActiveSubtab(null);
           flash(`📑 ${tabTarget.label}`); say(tabTarget.label); return true;
         }
       }
 
-      // כניסה לרשימת קניות ספציפית — "רשימת סופר", "כנסי לרשימת שבת" (גם בלי "קניות")
+      // כניסה לרשימת קניות — "רשימת סופר" (מוצא או יוצר)
       const shopListQ=(text.match(/(?:רשימת|כנסי לרשימת|תכנסי לרשימת|פתחי רשימת)\s+(.+)/)||[])[1];
       if(shopListQ){
         const found=shopLists.find(l=>l.name.includes(shopListQ)||shopListQ.includes(l.name));
         if(found){ setOpenListId(found.id);setOpenListType("shopping");setShowListsMenu(null); flash(`🛒 ${found.name}`); say(found.name); return true; }
+        // רשימה לא קיימת — יוצר חדשה
+        const newList={id:uid(),name:shopListQ.trim(),items:[]};
+        updateProfileV(p=>({...p,shopping:[...(p.shopping||[]),newList]}));
+        setOpenListId(newList.id);setOpenListType("shopping");setShowListsMenu(null);
+        flash(`🛒 רשימה חדשה: ${shopListQ.trim()}`); say("רשימה חדשה"); return true;
       }
 
       // תפריט קניות כללי — "קניות"
@@ -361,7 +373,7 @@ export default function App() {
         setVoiceDebug("");
       }else if(result.isFinal){
         setVoiceDebug("");
-        flash(`לא הבנתי: "${text.slice(0,12)}"`,3000);
+        flash(`לא הבנתי: "${text}"`,4000);
       }
     };
 
