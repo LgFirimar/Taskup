@@ -249,7 +249,7 @@ export default function App() {
       }
 
       // מעבר לשוניות — "ליאור", "לשונית ילדים", "עברי לילדים"
-      if(!text.match(/קניות|פתקים|פתק|תוסיף|הוסיף|הוסיפי|תוסיפי|משימה|תזכורת|כתבי|תכתבי|רשימת|רשימה/)){
+      if(!text.match(/קניות|פתקים|פתק|תוסיף|הוסיף|הוסיפי|תוסיפי|משימה|תזכורת|כתבי|תכתבי|רשימת|רשימה|הסר|מחק|הוריד|למחוק|להוריד/)){
         const navMatch=text.match(/(?:לשונייה|לשונית|עברי ל|תעברי ל|כנסי ל|תכנסי ל)\s*(.+)/);
         const navTarget=navMatch?navMatch[1].trim():null;
         const tabTarget=navTarget
@@ -296,10 +296,9 @@ export default function App() {
         flash(`נוסף: ${addItemQ.trim()}`); say(addItemQ.trim()); return true;
       }
 
-      // הסרת פריט — "הסר חלב", "מחק מסיר כתמים"
-      const removeMatch=text.match(/^(?:הסר|הסירי|מחק|מחקי)\s+(.+)/);
-      if(removeMatch&&openListIdRef.current&&openListTypeRef.current==="shopping"&&isFinal){
-        const removeQ=removeMatch[1].trim();
+      // הסרת פריט — "הסר/מחק/הוריד/להוריד/למחוק X"
+      const removeQ=(text.match(/(?:הסר|הסירי|מחק|מחקי|למחוק|מחוק|תמחק|תמחקי|להוריד|הוריד|הורד|הורידי|תוריד|תורידי)\s+(.+)/)||[])[1]?.trim();
+      if(removeQ&&openListIdRef.current&&openListTypeRef.current==="shopping"&&isFinal){
         const lid=openListIdRef.current;
         const curList=shopLists.find(l=>l.id===lid);
         const idx=curList?.items.findIndex(i=>i.text.includes(removeQ)||removeQ.includes(i.text))??-1;
