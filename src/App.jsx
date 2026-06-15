@@ -278,12 +278,27 @@ export default function App() {
         setShowListsMenu("shopping"); flash("🛒 קניות"); return true;
       }
 
-      // הוספת פריט לרשימת קניות פתוחה (רק בתוצאה סופית)
+      // הוספת פריט לרשימת קניות פתוחה
       const addItemQ=(text.match(/(?:תוסיפי|הוסיפי|הוסף|תוסיף)\s+(.+)/)||[])[1];
       if(addItemQ&&openListIdRef.current&&openListTypeRef.current==="shopping"&&isFinal){
         const lid=openListIdRef.current;
         updateProfileV(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id===lid?{...l,items:[...l.items,{id:uid(),text:addItemQ.trim()}]}:l)}));
         flash(`נוסף: ${addItemQ.trim()}`); say(addItemQ.trim()); return true;
+      }
+
+      // הסרת פריט — "הסר חלב", "מחק מסיר כתמים"
+      const removeMatch=text.match(/^(?:הסר|הסירי|מחק|מחקי)\s+(.+)/);
+      if(removeMatch&&openListIdRef.current&&openListTypeRef.current==="shopping"&&isFinal){
+        const removeQ=removeMatch[1].trim();
+        const lid=openListIdRef.current;
+        const curList=shopLists.find(l=>l.id===lid);
+        const idx=curList?.items.findIndex(i=>i.text.includes(removeQ)||removeQ.includes(i.text))??-1;
+        if(idx!==-1){
+          const itemText=curList.items[idx].text;
+          updateProfileV(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id!==lid?l:{...l,items:l.items.filter((_,i)=>i!==idx)})}));
+          flash(`הוסר: ${itemText}`); say("הוסר");
+        }else{ flash(`לא נמצא: ${removeQ}`,3000); }
+        return true;
       }
 
       // פתקים
@@ -350,11 +365,42 @@ export default function App() {
         flash(`לא נמצא: ${query}`,3000); return true;
       }
 
-      // קריאת רשימת קניות
-      if((text.includes("הקרא")||text.includes("מה יש"))&&openListIdRef.current){
+      // קריאת רשימת קניות פתוחה
+      if((text.includes("הקרא")||text.includes("מה יש"))&&openListIdRef.current&&openListTypeRef.current==="shopping"){
         const pid=activeProfileIdRef.current;
         const list=(profilesRef.current?.[pid]?.shopping||[]).find(l=>l.id===openListIdRef.current);
         if(list?.items?.length){ const u=new SpeechSynthesisUtterance(list.items.map(i=>i.text).join(", ")); u.lang="he-IL"; speechSynthesis.speak(u); flash(`קורא ${list.items.length} פריטים`); return true; }
+      }
+
+      // קריאת משימות / תזכורות — "תקריא", "תקריאי", "הקרא"
+      if(text.match(/תקריא|תקריאי|הקרא/)){
+        const taskTxt=(curCtx?.tasks||[]).filter(t=>!t.done).map(t=>t.text);
+        const remTxt=(curCtx?.reminders||[]).filter(r=>!r.done).map(r=>r.text);
+        const all=[...taskTxt,...remTxt];
+        if(all.length){ const u=new SpeechSynthesisUtterance(all.join(". ")); u.lang="he-IL"; speechSynthesis.speak(u); flash(`קורא ${all.length} פריטים`); return true; }
+        flash("אין פריטים",2000); return true;
+      }
+
+      // פרטי משימה/תזכורת ספציפית — "תקריאי X"
+      const readItemQ=(text.match(/(?:תקריאי|תקריא|הקרא)\s+(.+)/)||[])[1];
+      if(readItemQ){
+        const allItems=[...(curCtx?.tasks||[]),...(curCtx?.reminders||[])];
+        const found=allItems.find(i=>i.text.includes(readItemQ)||readItemQ.split(" ").some(w=>w.length>2&&i.text.includes(w)));
+        if(found){ const u=new SpeechSynthesisUtterance(found.text); u.lang="he-IL"; speechSynthesis.speak(u); flash(found.text); return true; }
+      }
+
+      // fallback כשרשימת קניות פתוחה — כל טקסט שלא זוהה → הוסף פריט
+      if(openListIdRef.current&&openListTypeRef.current==="shopping"&&isFinal&&text.length>1){
+        const lid=openListIdRef.current;
+        updateProfileV(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id!==lid?l:{...l,items:[...l.items,{id:uid(),text:text.trim()}]})}));
+        flash(`נוסף: ${text.trim()}`); say(text.trim()); return true;
+      }
+
+      // fallback כשפתק פתוח — כל טקסט שלא זוהה → הוסף לפתק
+      if(openListIdRef.current&&openListTypeRef.current==="notes"&&isFinal&&text.length>1){
+        const nid=openListIdRef.current;
+        updateProfileV(p=>({...p,notes:(p.notes||[]).map(n=>n.id!==nid?n:{...n,content:(n.content?n.content+"\n":"")+text.trim()})}));
+        flash(`✍️ ${text.trim()}`); say("נוסף"); return true;
       }
 
       return false;
