@@ -1,39 +1,10 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import SplashScreen from "./SplashScreen";
-
-const uid = () => Math.random().toString(36).slice(2, 9);
-const STORAGE_KEY = "taskup_v1";
-const WORKER_URL = "https://taskup-ai.lior0gal.workers.dev";
-const PRIO_CYCLE = [null, "green", "yellow", "red"];
-const PRIO_COLOR = { green:"#4caf50", yellow:"#ffa726", red:"#ef5350" };
-
-const TAB_COLORS = [
-  "#2d6a4f","#1d4e89","#7b3f00","#5a189a",
-  "#9d0208","#0077b6","#6a994e","#8338ec",
-  "#c77dff","#e76f51","#457b9d","#e9c46a",
-];
-
-const formatDate = (s) => {
-  if (!s) return null;
-  return new Date(s+"T00:00:00").toLocaleDateString("he-IL",{day:"numeric",month:"short",year:"numeric"});
-};
-const today = () => new Date().toISOString().split("T")[0];
-
-const getReminderStatus = (startDate,endDate) => {
-  if (!startDate) return "none";
-  const now=new Date(); now.setHours(0,0,0,0);
-  const start=new Date(startDate+"T00:00:00");
-  const end=endDate?new Date(endDate+"T00:00:00"):null;
-  if (now<start) return "future";
-  if (end&&now>end) return "past";
-  return "active";
-};
-const getDaysUntil = (s) => {
-  if (!s) return null;
-  const now=new Date(); now.setHours(0,0,0,0);
-  return Math.round((new Date(s+"T00:00:00")-now)/86400000);
-};
-const loadStorage = () => { try{return JSON.parse(localStorage.getItem(STORAGE_KEY))||{};}catch{return{};} };
+import { useVoiceCommands } from "./hooks/useVoiceCommands";
+import {
+  uid, STORAGE_KEY, WORKER_URL, PRIO_CYCLE, PRIO_COLOR, TAB_COLORS,
+  formatDate, today, getReminderStatus, getDaysUntil, loadStorage, computeInitialAlerts,
+} from "./utils";
 
 export default function App() {
   const [showSplash,setShowSplash] = useState(()=>!sessionStorage.getItem("splashDone"));
@@ -124,15 +95,15 @@ export default function App() {
   const [showClientIdInput,setShowClientIdInput] = useState(false);
 
   // ── Reminder alerts ───────────────────────────────────────────────────────
-  const [alertReminders,setAlertReminders] = useState([]);
-  const [showAlertModal,setShowAlertModal] = useState(false);
+  const [alertReminders] = useState(computeInitialAlerts);
+  const [showAlertModal,setShowAlertModal] = useState(()=>computeInitialAlerts().length>0);
   const [reminderAlertDate,setReminderAlertDate] = useState("");
 
   // ── Voice control ─────────────────────────────────────────────────────────
-  const [voiceState,setVoiceState] = useState("off"); // "off"|"idle"|"listening"|"processing"
+  const [voiceState,setVoiceState] = useState(()=>typeof window!=="undefined"&&sessionStorage.getItem("voice_on")?"idle":"off"); // "off"|"idle"|"listening"|"processing"
   const [voiceLabel,setVoiceLabel] = useState("");
   const [voiceDebug,setVoiceDebug] = useState("");
-  const [voiceAvail,setVoiceAvail] = useState(false);
+  const [voiceAvail] = useState(()=>typeof window!=="undefined"&&!!(window.SpeechRecognition||window.webkitSpeechRecognition));
   const voiceModeRef = useRef("idle");
   const voiceActiveRef = useRef(false);
   const recognitionRef = useRef(null);
@@ -160,24 +131,6 @@ export default function App() {
     return ()=>document.removeEventListener("mousedown",h);
   },[]);
 
-  // ── Reminder alert on open ────────────────────────────────────────────────
-  useEffect(()=>{
-    const d=loadStorage(); if(!d.profiles) return;
-    const todayStr=new Date().toISOString().split("T")[0];
-    const alerting=[];
-    Object.values(d.profiles).forEach(p=>{
-      (p.tabs||[]).forEach(t=>{
-        const check=(reminders)=>reminders.forEach(r=>{
-          if(r.done||!r.alertDate) return;
-          if(r.alertDate<=todayStr) alerting.push(r);
-        });
-        check(t.reminders||[]);
-        (t.subtabs||[]).forEach(s=>check(s.reminders||[]));
-      });
-    });
-    if(alerting.length){setAlertReminders(alerting);setShowAlertModal(true);}
-  },[]);
-
   // keep refs in sync so voice callbacks have fresh values
   useEffect(()=>{ openListIdRef.current=openListId; },[openListId]);
   useEffect(()=>{ openListTypeRef.current=openListType; },[openListType]);
@@ -186,265 +139,17 @@ export default function App() {
   useEffect(()=>{ activeSubtabRef.current=activeSubtab; },[activeSubtab]);
   useEffect(()=>{ activeProfileIdRef.current=activeProfileId; },[activeProfileId]);
 
-  // ── Voice recognition setup — starts only after splash is done ────────────
-  useEffect(()=>{
-    if(showSplash) return;
-    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SR) return;
-
-    const r=new SR();
-    r.lang="he-IL";
-    r.continuous=true;
-    r.interimResults=true;
-    recognitionRef.current=r;
-
-    const flash=(label,ms=2000)=>{ setVoiceLabel(label); setTimeout(()=>setVoiceLabel(""),ms); };
-    const say=(text,lang="he-IL")=>{ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text); u.lang=lang; speechSynthesis.speak(u); };
-
-    // helpers that always read the latest state via refs + stable setters
-    const setTabsV=(updater)=>{
-      setProfiles(prev=>{
-        const pid=activeProfileIdRef.current;
-        const cur=prev[pid]||{tabs:[]};
-        const newTabs=typeof updater==="function"?updater(cur.tabs):updater;
-        return{...prev,[pid]:{...cur,tabs:newTabs}};
-      });
-    };
-    const updateProfileV=(fn)=>{
-      setProfiles(prev=>{
-        const pid=activeProfileIdRef.current;
-        return{...prev,[pid]:fn(prev[pid]||{})};
-      });
-    };
-    const smartUpdateV=(type,id,fn)=>{
-      const key=type==="task"?"tasks":"reminders";
-      setTabsV(prev=>prev.map(t=>{
-        if(t.id!==activeTabRef.current)return t;
-        return{...t,[key]:t[key].map(i=>i.id===id?fn(i):i),subtabs:t.subtabs.map(s=>({...s,[key]:s[key].map(i=>i.id===id?fn(i):i)}))};
-      }));
-    };
-
-    const executeCommand=(text,isFinal=false)=>{
-      const curTabs=tabsRef.current;
-      const curActiveTab=activeTabRef.current;
-      const curActiveSubtab=activeSubtabRef.current;
-      const curProf=profilesRef.current?.[activeProfileIdRef.current]||{};
-      const shopLists=curProf.shopping||[];
-      const noteLists=curProf.notes||[];
-      const curTab=curTabs.find(t=>t.id===curActiveTab)||null;
-      const curSubtab=curActiveSubtab&&curTab?curTab.subtabs.find(s=>s.id===curActiveSubtab):null;
-      const curCtx=curSubtab||curTab;
-
-      // בדיקה — פקודת דיבוג
-      if(text.includes("בדיקה")){
-        const pid=activeProfileIdRef.current;
-        flash(`לשוניות: ${curTabs.length} | קניות: ${shopLists.length} | פתקים: ${noteLists.length}`,5000);
-        return true;
-      }
-
-      // סגור / חזרה
-      if(text.includes("סגור")||text.includes("חזרה")||text.includes("אחורה")){
-        setOpenListId(null);setOpenListType(null);setShowListsMenu(null);
-        flash("סגור"); return true;
-      }
-
-      // מעבר לשוניות — "ליאור", "לשונית ילדים", "עברי לילדים"
-      if(!text.match(/קניות|פתקים|פתק|תוסיף|הוסיף|הוסיפי|תוסיפי|משימה|תזכורת|כתבי|תכתבי|רשימת|רשימה|הסר|מחק|הוריד|למחוק|להוריד/)){
-        const navMatch=text.match(/(?:לשונייה|לשונית|עברי ל|תעברי ל|כנסי ל|תכנסי ל)\s*(.+)/);
-        const navTarget=navMatch?navMatch[1].trim():null;
-        const tabTarget=navTarget
-          ?curTabs.find(t=>t.label.includes(navTarget)||navTarget.includes(t.label))
-          :curTabs.find(t=>text.includes(t.label.toLowerCase())||t.label.toLowerCase().includes(text));
-        if(tabTarget){
-          setActiveTab(tabTarget.id);setActiveSubtab(null);
-          flash(`📑 ${tabTarget.label}`); say(tabTarget.label); return true;
-        }
-      }
-
-      // כניסה לרשימת קניות — "רשימת X" / "רשימה X" / שם הרשימה ישירות
-      const shopListPrefix=(text.match(/(?:רשימת|רשימה|כנסי לרשימת|תכנסי לרשימת|פתחי רשימת|פתחי את רשימת)\s+(.+)/)||[])[1];
-      const shopListByName=!shopListPrefix?shopLists.find(l=>l.name.length>=2&&(text.trim()===l.name.toLowerCase()||text.trim().includes(l.name.toLowerCase())||l.name.toLowerCase().includes(text.trim()))):null;
-      if(shopListPrefix||shopListByName){
-        const found=shopListPrefix
-          ?shopLists.find(l=>l.name.includes(shopListPrefix)||shopListPrefix.includes(l.name))
-          :shopListByName;
-        if(found){ setOpenListId(found.id);setOpenListType("shopping");setShowListsMenu(null); flash(`🛒 ${found.name}`); say(found.name); return true; }
-        if(shopListPrefix){
-          const newList={id:uid(),name:shopListPrefix.trim(),items:[]};
-          updateProfileV(p=>({...p,shopping:[...(p.shopping||[]),newList]}));
-          setOpenListId(newList.id);setOpenListType("shopping");setShowListsMenu(null);
-          flash(`🛒 רשימה חדשה: ${shopListPrefix.trim()}`); say("רשימה חדשה"); return true;
-        }
-      }
-
-      // רשימות קניות — "אילו רשימות" / "הצג רשימות"
-      if(text.includes("אילו רשימות")||text.includes("הצג רשימות")||text.includes("רשימות קניות")){
-        if(shopLists.length){ const u=new SpeechSynthesisUtterance(shopLists.map(l=>l.name).join(", ")); u.lang="he-IL"; speechSynthesis.speak(u); flash(shopLists.map(l=>l.name).join(" | ")); return true; }
-        flash("אין רשימות קניות",3000); return true;
-      }
-
-      // תפריט קניות כללי — "קניות"
-      if(text.includes("קניות")&&!text.match(/(?:תוסיף|הוסיף|הוסיפי|תוסיפי)\s/)){
-        setShowListsMenu("shopping"); flash("🛒 קניות"); return true;
-      }
-
-      // הוספת פריט לרשימת קניות פתוחה
-      const addItemQ=(text.match(/(?:תוסיפי|הוסיפי|הוסף|תוסיף)\s+(.+)/)||[])[1];
-      if(addItemQ&&openListIdRef.current&&openListTypeRef.current==="shopping"&&isFinal){
-        const lid=openListIdRef.current;
-        updateProfileV(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id===lid?{...l,items:[...l.items,{id:uid(),text:addItemQ.trim()}]}:l)}));
-        flash(`נוסף: ${addItemQ.trim()}`); say(addItemQ.trim()); return true;
-      }
-
-      // הסרת פריט — "הסר/מחק/הוריד/להוריד/למחוק X"
-      const removeQ=(text.match(/(?:הסר|הסירי|מחק|מחקי|למחוק|מחוק|תמחק|תמחקי|להוריד|הוריד|הורד|הורידי|תוריד|תורידי)\s+(.+)/)||[])[1]?.trim();
-      if(removeQ&&openListIdRef.current&&openListTypeRef.current==="shopping"&&isFinal){
-        const lid=openListIdRef.current;
-        const curList=shopLists.find(l=>l.id===lid);
-        const idx=curList?.items.findIndex(i=>i.text.includes(removeQ)||removeQ.includes(i.text))??-1;
-        if(idx!==-1){
-          const itemText=curList.items[idx].text;
-          updateProfileV(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id!==lid?l:{...l,items:l.items.filter((_,i)=>i!==idx)})}));
-          flash(`הוסר: ${itemText}`); say("הוסר");
-        }else{ flash(`לא נמצא: ${removeQ}`,3000); }
-        return true;
-      }
-
-      // פתקים
-      if(text.includes("פתקים")||text.includes("פתק")){
-        const noteQ=(text.match(/(?:פתחי פתק|כנסי לפתק|תכנסי לפתק|פתק)\s+(.+)/)||[])[1];
-        if(noteQ){
-          const found=noteLists.find(n=>n.name.includes(noteQ)||noteQ.includes(n.name));
-          if(!found){
-            const newNote={id:uid(),name:noteQ.trim(),content:""};
-            updateProfileV(p=>({...p,notes:[...(p.notes||[]),newNote]}));
-            setOpenListId(newNote.id);setOpenListType("notes");setShowListsMenu(null);
-            flash(`📝 פתק חדש: ${noteQ.trim()}`); say("פתק חדש"); return true;
-          }
-          setOpenListId(found.id);setOpenListType("notes");setShowListsMenu(null);
-          flash(`📝 ${found.name}`); say(found.name); return true;
-        }
-        setShowListsMenu("notes"); flash("📝 פתקים"); return true;
-      }
-
-      // כתיבה לפתק פתוח (רק בתוצאה סופית)
-      if(openListTypeRef.current==="notes"&&openListIdRef.current&&isFinal){
-        const writeQ=(text.match(/(?:תכתבי|כתבי|הוסיפי|תוסיפי)\s+(.+)/)||[])[1];
-        if(writeQ){
-          const nid=openListIdRef.current;
-          updateProfileV(p=>({...p,notes:(p.notes||[]).map(n=>n.id===nid?{...n,content:(n.content?n.content+"\n":"")+writeQ.trim()}:n)}));
-          flash(`✍️ ${writeQ.trim()}`); say("נוסף"); return true;
-        }
-      }
-
-      // הוספת משימה (רק בתוצאה סופית)
-      const taskQ=(text.match(/(?:הוסיפי משימה|תוסיפי משימה|משימה חדשה|משימה)[:\s]+(.+)/)||[])[1];
-      if(taskQ&&curCtx&&isFinal){
-        const item={id:uid(),text:taskQ.trim(),done:false,createdAt:today(),subtasks:[],priority:null};
-        if(curSubtab){
-          setTabsV(prev=>prev.map(t=>t.id!==curActiveTab?t:{...t,subtabs:t.subtabs.map(s=>s.id!==curActiveSubtab?s:{...s,tasks:[...s.tasks,item]})}));
-        }else{
-          setTabsV(prev=>prev.map(t=>t.id!==curActiveTab?t:{...t,tasks:[...t.tasks,item]}));
-        }
-        flash(`✓ ${taskQ.trim()}`); say("נוסף"); return true;
-      }
-
-      // הוספת תזכורת (רק בתוצאה סופית)
-      const remQ=(text.match(/(?:הוסיפי תזכורת|תוסיפי תזכורת|תזכורת חדשה|תזכורת)[:\s]+(.+)/)||[])[1];
-      if(remQ&&curCtx&&isFinal){
-        const item={id:uid(),text:remQ.trim(),done:false,createdAt:today(),startDate:null,endDate:null,alertDate:null};
-        if(curSubtab){
-          setTabsV(prev=>prev.map(t=>t.id!==curActiveTab?t:{...t,subtabs:t.subtabs.map(s=>s.id!==curActiveSubtab?s:{...s,reminders:[...s.reminders,item]})}));
-        }else{
-          setTabsV(prev=>prev.map(t=>t.id!==curActiveTab?t:{...t,reminders:[...t.reminders,item]}));
-        }
-        flash(`🔔 ${remQ.trim()}`); say("נוסף"); return true;
-      }
-
-      // סימון ביצוע
-      const doneQ=(text.match(/(?:סמני|סיימתי|בוצע|בוצעה)\s+(.+)/)||[])[1];
-      if(doneQ){
-        const query=doneQ.replace(/\s*כבוצע[ת]?\s*$/,"").trim();
-        const allItems=[
-          ...(curCtx?.tasks||[]).filter(t=>!t.done).map(t=>({...t,itype:"task"})),
-          ...(curCtx?.reminders||[]).filter(r=>!r.done).map(r=>({...r,itype:"reminder"})),
-        ];
-        const found=allItems.find(i=>i.text.includes(query)||query.split(" ").some(w=>w.length>2&&i.text.includes(w)));
-        if(found){ smartUpdateV(found.itype,found.id,i=>({...i,done:true})); flash(`✓ ${found.text}`); say("בוצע"); return true; }
-        flash(`לא נמצא: ${query}`,3000); return true;
-      }
-
-      // קריאת רשימת קניות פתוחה
-      if((text.includes("הקרא")||text.includes("מה יש"))&&openListIdRef.current&&openListTypeRef.current==="shopping"){
-        const pid=activeProfileIdRef.current;
-        const list=(profilesRef.current?.[pid]?.shopping||[]).find(l=>l.id===openListIdRef.current);
-        if(list?.items?.length){ const u=new SpeechSynthesisUtterance(list.items.map(i=>i.text).join(", ")); u.lang="he-IL"; speechSynthesis.speak(u); flash(`קורא ${list.items.length} פריטים`); return true; }
-      }
-
-      // קריאת משימות / תזכורות — "תקריא", "תקריאי", "הקרא"
-      if(text.match(/תקריא|תקריאי|הקרא/)){
-        const taskTxt=(curCtx?.tasks||[]).filter(t=>!t.done).map(t=>t.text);
-        const remTxt=(curCtx?.reminders||[]).filter(r=>!r.done).map(r=>r.text);
-        const all=[...taskTxt,...remTxt];
-        if(all.length){ const u=new SpeechSynthesisUtterance(all.join(". ")); u.lang="he-IL"; speechSynthesis.speak(u); flash(`קורא ${all.length} פריטים`); return true; }
-        flash("אין פריטים",2000); return true;
-      }
-
-      // פרטי משימה/תזכורת ספציפית — "תקריאי X"
-      const readItemQ=(text.match(/(?:תקריאי|תקריא|הקרא)\s+(.+)/)||[])[1];
-      if(readItemQ){
-        const allItems=[...(curCtx?.tasks||[]),...(curCtx?.reminders||[])];
-        const found=allItems.find(i=>i.text.includes(readItemQ)||readItemQ.split(" ").some(w=>w.length>2&&i.text.includes(w)));
-        if(found){ const u=new SpeechSynthesisUtterance(found.text); u.lang="he-IL"; speechSynthesis.speak(u); flash(found.text); return true; }
-      }
-
-      // fallback כשרשימת קניות פתוחה — כל טקסט שלא זוהה → הוסף פריט
-      if(openListIdRef.current&&openListTypeRef.current==="shopping"&&isFinal&&text.length>1){
-        const lid=openListIdRef.current;
-        updateProfileV(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id!==lid?l:{...l,items:[...l.items,{id:uid(),text:text.trim()}]})}));
-        flash(`נוסף: ${text.trim()}`); say(text.trim()); return true;
-      }
-
-      // fallback כשפתק פתוח — כל טקסט שלא זוהה → הוסף לפתק
-      if(openListIdRef.current&&openListTypeRef.current==="notes"&&isFinal&&text.length>1){
-        const nid=openListIdRef.current;
-        updateProfileV(p=>({...p,notes:(p.notes||[]).map(n=>n.id!==nid?n:{...n,content:(n.content?n.content+"\n":"")+text.trim()})}));
-        flash(`✍️ ${text.trim()}`); say("נוסף"); return true;
-      }
-
-      return false;
-    };
-
-    r.onresult=(e)=>{
-      const result=e.results[e.results.length-1];
-      const text=result[0].transcript.trim().toLowerCase();
-      setVoiceDebug(text);
-      if(voiceModeRef.current!=="listening") return;
-      if(!text) return;
-      let executed=false;
-      try{ executed=executeCommand(text,result.isFinal)===true; }
-      catch(err){ flash(`שגיאה: ${err.message.slice(0,25)}`,5000); }
-      if(executed){
-        setVoiceDebug("");
-      }else if(result.isFinal){
-        setVoiceDebug("");
-        flash(`לא הבנתי: "${text}"`,4000);
-      }
-    };
-
-    r.onerror=(e)=>{ flash(`שגיאת מיקרופון: ${e.error}`,4000); };
-    r.onend=()=>{ if(voiceActiveRef.current){ try{ r.start(); }catch{} } };
-
-    setVoiceAvail(true);
-    if(sessionStorage.getItem("voice_on")){
-      voiceActiveRef.current=true;
-      try{ r.start(); setVoiceState("idle"); }catch{}
-    }
-    return ()=>{ voiceActiveRef.current=false; try{ r.stop(); }catch{} };
-  },[showSplash]);
+  // ── Voice recognition — Hebrew commands via Web Speech API ────────────────
+  useVoiceCommands({
+    showSplash,
+    recognitionRef, voiceActiveRef, voiceModeRef,
+    openListIdRef, openListTypeRef, profilesRef, tabsRef, activeTabRef, activeSubtabRef, activeProfileIdRef,
+    setVoiceLabel, setVoiceDebug,
+    setProfiles, setOpenListId, setOpenListType, setShowListsMenu, setActiveTab, setActiveSubtab,
+  });
 
   // ── Derived tabs ──────────────────────────────────────────────────────────
-  const tabs = profiles[activeProfileId]?.tabs||[];
+  const tabs = useMemo(()=>profiles[activeProfileId]?.tabs||[], [profiles, activeProfileId]);
   useEffect(()=>{ tabsRef.current=tabs; },[tabs]);
   const setTabs = (updater) => setProfiles(prev=>{
     const cur=prev[activeProfileId]||{tabs:[]};
@@ -501,10 +206,10 @@ export default function App() {
     setParsingList(true);
     try{
       const res=await fetch(`${WORKER_URL}/parse-list`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({text})});
-      if(!res.ok)throw new Error();
+      if(!res.ok)throw new Error(`parse-list failed: ${res.status}`);
       const{items}=await res.json();
       if(items?.length){ updateProfile(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id===listId?{...l,items:[...l.items,...items.map(t=>({id:uid(),text:t}))]}:l)})); setParsingList(false); return; }
-    }catch{}
+    }catch(err){ console.error("parseAndAddItems: falling back to raw text",err); }
     addShoppingItem(listId,text);
     setParsingList(false);
   };
@@ -543,10 +248,10 @@ export default function App() {
     setAiThinkingProj(true);
     try{
       const res=await fetch(`${WORKER_URL}/breakdown`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({task:`רעיונות לנושא: ${topic}`})});
-      if(!res.ok)throw new Error();
+      if(!res.ok)throw new Error(`breakdown failed: ${res.status}`);
       const{steps}=await res.json();
       if(steps?.length) steps.forEach(s=>addBubble(pid,s,"ai"));
-    }catch{}
+    }catch(err){ console.error("aiThinkBubbles failed",err); }
     setAiThinkingProj(false);
   };
 
@@ -554,10 +259,10 @@ export default function App() {
     setAiBreakingProj(tid);
     try{
       const res=await fetch(`${WORKER_URL}/breakdown`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({task:text})});
-      if(!res.ok)throw new Error();
+      if(!res.ok)throw new Error(`breakdown failed: ${res.status}`);
       const{steps}=await res.json();
       if(steps?.length) steps.forEach(s=>addProjectSubtask(pid,tid,s));
-    }catch{}
+    }catch(err){ console.error("aiBreakProjectTask failed",err); }
     setAiBreakingProj(null);
   };
 
@@ -619,6 +324,7 @@ export default function App() {
           { headers: { Authorization: `Bearer ${gmailToken}` } }
         );
         if (searchRes.status === 401) { disconnectGmail(); setEmailLoading(false); return; }
+        if (!searchRes.ok) throw new Error(`Gmail search failed: ${searchRes.status}`);
         const searchData = await searchRes.json();
         const threads = searchData.threads || [];
 
@@ -627,6 +333,7 @@ export default function App() {
             `https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=full`,
             { headers: { Authorization: `Bearer ${gmailToken}` } }
           );
+          if (!tRes.ok) { console.error(`Gmail thread fetch failed: ${tRes.status}`); continue; }
           const tData = await tRes.json();
           const msg = tData.messages?.[0];
           if (!msg) continue;
@@ -649,6 +356,7 @@ export default function App() {
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ subject, sender, body: body.slice(0,3000), format: rule.format }),
           });
+          if (!sumRes.ok) { console.error(`summarize-email failed: ${sumRes.status}`); continue; }
           const sumData = await sumRes.json();
           summaries.push({ id: thread.id, subject, sender, date, summary: sumData.result, format: rule.format, ruleId: rule.id });
         }
@@ -774,13 +482,13 @@ export default function App() {
     setBreakingDownId(taskId); setExpandedTaskId(taskId);
     try{
       const res=await fetch(`${WORKER_URL}/breakdown`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({task:taskText})});
-      if(!res.ok)throw new Error();
+      if(!res.ok)throw new Error(`breakdown failed: ${res.status}`);
       const{steps}=await res.json();
       if(steps?.length){
         const newSubs=steps.map(text=>({id:uid(),text,done:false}));
         setTabs(prev=>prev.map(t=>{ if(t.id!==capTab)return t; const u=tasks=>tasks.map(task=>task.id===taskId?{...task,subtasks:[...(task.subtasks||[]),...newSubs]}:task); if(hasSub)return{...t,subtabs:t.subtabs.map(s=>s.id===capSubtab?{...s,tasks:u(s.tasks)}:s)}; return{...t,tasks:u(t.tasks)}; }));
       }
-    }catch{}
+    }catch(err){ console.error("breakdownTaskDirect failed",err); }
     setBreakingDownId(null);
   };
 
@@ -788,10 +496,10 @@ export default function App() {
     setBreakingDownId(taskId);
     try{
       const res=await fetch(`${WORKER_URL}/breakdown`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({task:taskText})});
-      if(!res.ok)throw new Error();
+      if(!res.ok)throw new Error(`breakdown failed: ${res.status}`);
       const{steps}=await res.json();
       if(steps?.length) setPendingBreakdown({taskId, steps:steps.map(t=>({id:uid(),text:t}))});
-    }catch{}
+    }catch(err){ console.error("breakdownTask failed",err); }
     setBreakingDownId(null);
   };
 
@@ -849,7 +557,7 @@ export default function App() {
       <div key={item.id} className={`task-row${prioClass}`} style={{flexDirection:"column",gap:0}}>
         <div style={{display:"flex",alignItems:"flex-start",gap:10,width:"100%"}}>
           {/* Priority dot */}
-          <button className="prio-dot" style={{background:prioColor||"white",borderColor:prioColor||"#d8d7cf","--accent":accent}} title="הגדרי עדיפות"
+          <button className="prio-dot" style={{background:prioColor||"white",borderColor:prioColor||"#d8d7cf","--accent":accent}} title="הגדרי עדיפות" aria-label="הגדרי עדיפות"
             onClick={()=>cyclePriority(item.id)}/>
 
           <div style={{flex:1,minWidth:0}}>
@@ -860,25 +568,26 @@ export default function App() {
 
           <div style={{display:"flex",alignItems:"center",flexShrink:0,gap:2}}>
             {/* Done — checkmark SVG */}
-            <button className="icon-btn done-btn" style={{"--accent":accent}} title="סיימתי!" onClick={()=>handleBigComplete(item.id)}>
+            <button className="icon-btn done-btn" style={{"--accent":accent}} title="סיימתי!" aria-label="סיימתי!" onClick={()=>handleBigComplete(item.id)}>
               <svg width="14" height="11" viewBox="0 0 14 11" fill="none">
                 <path d="M1.5 5.5L5.5 9.5L12.5 1.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </button>
             {/* Scissors — direct breakdown */}
-            <button className="icon-btn" style={{color:breakingDownId===item.id?"#ffa726":"#d4a96e",fontSize:14}} title="קטן עלי — מוסיף ישירות"
+            <button className="icon-btn" style={{color:breakingDownId===item.id?"#ffa726":"#d4a96e",fontSize:14}} title="קטן עלי — מוסיף ישירות" aria-label="קטן עלי — מוסיף ישירות"
               onClick={()=>breakdownTaskDirect(item.id,item.text)}>
               {breakingDownId===item.id?<div className="spinner" style={{borderTopColor:"#ffa726",borderColor:"#ffa72633"}}/>:"✂"}
             </button>
             {/* ✦✦ Claude suggestions — shows editable steps */}
             <button
               title="שאלי את קלוד"
+              aria-label="שאלי את קלוד"
               onClick={()=>breakdownTask(item.id,item.text)}
               style={{background:"none",border:"none",cursor:"pointer",padding:"3px 5px",borderRadius:8,fontSize:13,fontWeight:700,color:hasPending?"#b45309":"#c8b090",letterSpacing:-1,minWidth:28,minHeight:28,display:"flex",alignItems:"center",justifyContent:"center"}}>
               {breakingDownId===item.id&&hasPending?<div className="spinner" style={{borderTopColor:"#b45309",borderColor:"#b4530933",width:12,height:12}}/>:"✦✦"}
             </button>
-            <button className="icon-btn" style={{fontSize:17}} onClick={()=>{setEditId(item.id);setEditText(item.text);}}>✎</button>
-            <button className="icon-btn del" onClick={()=>deleteItem("task",item.id)}>✕</button>
+            <button className="icon-btn" style={{fontSize:17}} aria-label="ערוך משימה" onClick={()=>{setEditId(item.id);setEditText(item.text);}}>✎</button>
+            <button className="icon-btn del" aria-label="מחק משימה" onClick={()=>deleteItem("task",item.id)}>✕</button>
           </div>
         </div>
 
@@ -887,11 +596,11 @@ export default function App() {
           <div style={{marginTop:8,paddingRight:28}}>
             {(item.subtasks||[]).map(st=>(
               <div key={st.id} className="subtask-row" style={{"--accent":accent}}>
-                <button className={`subtask-check${st.done?" checked":""}`} onClick={()=>toggleSubtask(item.id,st.id)}>
+                <button className={`subtask-check${st.done?" checked":""}`} aria-label={st.done?"בטל סימון תת-משימה":"סמן תת-משימה כבוצעה"} onClick={()=>toggleSubtask(item.id,st.id)}>
                   {st.done&&<svg width="9" height="7" viewBox="0 0 9 7" fill="none"><path d="M1 3.5L3.5 6L8 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                 </button>
                 <span style={{fontSize:13,flex:1,color:st.done?"#bbb":"#555",textDecoration:st.done?"line-through":"none"}}>{st.text}</span>
-                <button className="icon-btn del" style={{fontSize:11,minWidth:"unset",minHeight:"unset",padding:"2px 3px"}} onClick={()=>deleteSubtask(item.id,st.id)}>✕</button>
+                <button className="icon-btn del" style={{fontSize:11,minWidth:"unset",minHeight:"unset",padding:"2px 3px"}} aria-label="מחק תת-משימה" onClick={()=>deleteSubtask(item.id,st.id)}>✕</button>
               </div>
             ))}
           </div>
@@ -906,7 +615,7 @@ export default function App() {
                 <span style={{fontSize:11,color:"#bbb",minWidth:16}}>{idx+1}.</span>
                 <input className="edit-inline" style={{flex:1,fontSize:13}} value={s.text}
                   onChange={e=>setPendingBreakdown(p=>({...p,steps:p.steps.map(x=>x.id===s.id?{...x,text:e.target.value}:x)}))}/>
-                <button onClick={()=>setPendingBreakdown(p=>({...p,steps:p.steps.filter(x=>x.id!==s.id)}))} style={{background:"none",border:"none",color:"#ddd",cursor:"pointer",fontSize:14,flexShrink:0}}>✕</button>
+                <button onClick={()=>setPendingBreakdown(p=>({...p,steps:p.steps.filter(x=>x.id!==s.id)}))} style={{background:"none",border:"none",color:"#ddd",cursor:"pointer",fontSize:14,flexShrink:0}} aria-label="מחק הצעה">✕</button>
               </div>
             ))}
             <div style={{display:"flex",gap:8,marginTop:10}}>
@@ -921,7 +630,7 @@ export default function App() {
           <div style={{marginTop:8,paddingRight:28,display:"flex",gap:6,alignItems:"center"}}>
             <input autoFocus className="edit-inline" style={{fontSize:13}} placeholder="הוסיפי צעד קטן..." value={subtaskInput} onChange={e=>setSubtaskInput(e.target.value)}
               onKeyDown={e=>{if(e.key==="Enter"){addSubtask(item.id,subtaskInput);setSubtaskInput("");}if(e.key==="Escape"){setExpandedTaskId(null);setSubtaskInput("");}}}/>
-            <button className="add-btn" style={{padding:"4px 10px",fontSize:13}} onClick={()=>{addSubtask(item.id,subtaskInput);setSubtaskInput("");}}>+</button>
+            <button className="add-btn" style={{padding:"4px 10px",fontSize:13}} aria-label="הוסף תת-משימה" onClick={()=>{addSubtask(item.id,subtaskInput);setSubtaskInput("");}}>+</button>
           </div>
         )}
 
@@ -1238,7 +947,7 @@ export default function App() {
                 <div style={{display:"flex",gap:6,marginTop:8}}>
                   <input autoFocus className="plain-input" style={{flex:1,fontSize:13,padding:"6px 10px"}} placeholder={showListsMenu==="shopping"?"שם הרשימה":"שם הפתק"} value={newListName} onChange={e=>setNewListName(e.target.value)}
                     onKeyDown={e=>{if(e.key==="Enter"){if(showListsMenu==="shopping")addShoppingList(newListName);else addNote(newListName);setNewListName("");setShowNewListInput(false);}if(e.key==="Escape"){setShowNewListInput(false);setNewListName("");}}}/>
-                  <button className="add-btn" style={{padding:"6px 10px",fontSize:13}} onClick={()=>{if(showListsMenu==="shopping")addShoppingList(newListName);else addNote(newListName);setNewListName("");setShowNewListInput(false);}}>+</button>
+                  <button className="add-btn" style={{padding:"6px 10px",fontSize:13}} aria-label={showListsMenu==="shopping"?"צור רשימה":"צור פתק"} onClick={()=>{if(showListsMenu==="shopping")addShoppingList(newListName);else addNote(newListName);setNewListName("");setShowNewListInput(false);}}>+</button>
                 </div>
               ):(
                 <button className="ghost-btn" style={{width:"100%",marginTop:4,fontSize:13}} onClick={()=>setShowNewListInput(true)}>+ {showListsMenu==="shopping"?"רשימה חדשה":"פתק חדש"}</button>
@@ -1287,8 +996,8 @@ export default function App() {
                           onKeyDown={e=>{if(e.key==="Enter")editShoppingItem(openListId,item.id,editingShoppingItem.text);if(e.key==="Escape")setEditingShoppingItem(null);}}/>
                       :<span style={{flex:1,fontSize:15,color:"#1a1a1a",lineHeight:1.5}}>{item.text}</span>
                     }
-                    <button onClick={()=>setEditingShoppingItem({listId:openListId,itemId:item.id,text:item.text})} style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}}>✎</button>
-                    <button onClick={()=>deleteShoppingItem(openListId,item.id)} style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}}>✕</button>
+                    <button onClick={()=>setEditingShoppingItem({listId:openListId,itemId:item.id,text:item.text})} style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}} aria-label="ערוך פריט">✎</button>
+                    <button onClick={()=>deleteShoppingItem(openListId,item.id)} style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}} aria-label="מחק פריט">✕</button>
                   </div>
                 ))}
               </div>
@@ -1298,7 +1007,7 @@ export default function App() {
                 <div style={{display:"flex",gap:10}}>
                   <input autoFocus className="plain-input" style={{flex:1,fontSize:15}} placeholder='חלב, ביצים, לחם  או  "תקני גם יוגורט"' value={listItemInput} onChange={e=>setListItemInput(e.target.value)}
                     onKeyDown={e=>{if(e.key==="Enter"){parseAndAddItems(openListId,listItemInput);setListItemInput("");}}}/>
-                  <button className="add-btn" style={{minWidth:52}} onClick={()=>{parseAndAddItems(openListId,listItemInput);setListItemInput("");}} disabled={parsingList}>
+                  <button className="add-btn" style={{minWidth:52}} aria-label="הוסף פריטים" onClick={()=>{parseAndAddItems(openListId,listItemInput);setListItemInput("");}} disabled={parsingList}>
                     {parsingList?<div className="spinner" style={{borderTopColor:"white",borderColor:"rgba(255,255,255,0.3)"}}/>:"+"}
                   </button>
                 </div>
@@ -1353,7 +1062,7 @@ export default function App() {
                 <div style={{background:"white",borderRadius:14,padding:16,marginBottom:12,boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
                     <span style={{fontSize:13,fontWeight:700}}>חוק חדש</span>
-                    <button onClick={()=>{setShowNewRule(false);setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false});}} style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",fontSize:18,lineHeight:1}}>✕</button>
+                    <button onClick={()=>{setShowNewRule(false);setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false});}} style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",fontSize:18,lineHeight:1}} aria-label="בטל חוק חדש">✕</button>
                   </div>
                   <div style={{display:"flex",flexDirection:"column",gap:10}}>
                     <input className="plain-input" style={{fontSize:13}} placeholder="שולח (לדוג' momence.com)" value={newRule.sender} onChange={e=>setNewRule(p=>({...p,sender:e.target.value}))}/>
@@ -1385,7 +1094,7 @@ export default function App() {
                     {rule.subject&&<div style={{fontSize:12,color:"#888"}}>נושא: {rule.subject}</div>}
                     <div style={{fontSize:11,color:accent,marginTop:2}}>{{"bullets":"• נקודות","summary":"סיכום","tasks":"משימות","dates":"תאריכים"}[rule.format]}</div>
                   </div>
-                  <button onClick={()=>saveEmailRules(emailRules.filter(r=>r.id!==rule.id))} style={{background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:16}}>✕</button>
+                  <button onClick={()=>saveEmailRules(emailRules.filter(r=>r.id!==rule.id))} style={{background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:16}} aria-label="מחק חוק">✕</button>
                 </div>
               ))}
 
@@ -1444,7 +1153,7 @@ export default function App() {
                     <div key={pj.id} style={{background:"white",borderRadius:16,padding:"16px 18px",marginBottom:10,boxShadow:"0 1px 6px rgba(0,0,0,0.06)",cursor:"pointer",borderRight:`4px solid ${accent}`}} onClick={()=>{setOpenProjectId(pj.id);setProjectView("tasks");}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                         <span style={{fontWeight:700,fontSize:15,color:"#1a1a2e"}}>{pj.name}</span>
-                        <button onClick={e=>{e.stopPropagation();deleteProject(pj.id);}} style={{background:"none",border:"none",color:"#ddd",cursor:"pointer",fontSize:14}}>✕</button>
+                        <button onClick={e=>{e.stopPropagation();deleteProject(pj.id);}} style={{background:"none",border:"none",color:"#ddd",cursor:"pointer",fontSize:14}} aria-label="מחק פרויקט">✕</button>
                       </div>
                       <div style={{marginTop:8,height:5,background:"#f0f0f8",borderRadius:10,overflow:"hidden"}}>
                         <div style={{height:"100%",background:accent,width:`${prog}%`,borderRadius:10,transition:"width 0.4s"}}/>
@@ -1495,7 +1204,7 @@ export default function App() {
                     <div style={{background:"white",borderRadius:14,overflow:"hidden",boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
                       {pendingTasks.slice(0,3).map((t,i)=>(
                         <div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:i<Math.min(pendingTasks.length,3)-1?"1px solid #f5f5fc":"none",borderRight:`3px solid ${accent}`}}>
-                          <button onClick={()=>toggleProjectTask(openProject.id,t.id)} style={{width:18,height:18,borderRadius:4,border:`2px solid #dde`,background:"white",cursor:"pointer",flexShrink:0}}/>
+                          <button onClick={()=>toggleProjectTask(openProject.id,t.id)} aria-label="סמן משימה כבוצעה" style={{width:18,height:18,borderRadius:4,border:`2px solid #dde`,background:"white",cursor:"pointer",flexShrink:0}}/>
                           <span style={{fontSize:13,color:"#1a1a2e",flex:1}}>{t.text}</span>
                           {(t.subtasks||[]).length>0&&<span style={{fontSize:11,color:"#bbb"}}>{(t.subtasks||[]).filter(s=>s.done).length}/{(t.subtasks||[]).length}</span>}
                         </div>
@@ -1571,17 +1280,17 @@ export default function App() {
                     return (
                       <div key={task.id} style={{background:"white",borderRadius:14,marginBottom:8,overflow:"hidden",boxShadow:"0 1px 6px rgba(0,0,0,0.06)",borderRight:`3px solid ${task.done?"#4caf50":accent}`}}>
                         <div style={{padding:"12px 14px",display:"flex",alignItems:"center",gap:10}}>
-                          <button onClick={()=>toggleProjectTask(openProject.id,task.id)} style={{width:20,height:20,borderRadius:4,border:`2px solid ${task.done?"#4caf50":"#dde"}`,background:task.done?"#4caf50":"white",color:"white",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,flexShrink:0}}>
+                          <button onClick={()=>toggleProjectTask(openProject.id,task.id)} aria-label={task.done?"בטל סימון משימה":"סמן משימה כבוצעה"} style={{width:20,height:20,borderRadius:4,border:`2px solid ${task.done?"#4caf50":"#dde"}`,background:task.done?"#4caf50":"white",color:"white",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,flexShrink:0}}>
                             {task.done?"✓":""}
                           </button>
                           <span style={{flex:1,fontSize:14,color:task.done?"#bbb":"#1a1a2e",textDecoration:task.done?"line-through":"none",fontWeight:500}}>{task.text}</span>
                           <button onClick={()=>aiBreakProjectTask(openProject.id,task.id,task.text)} style={{background:"none",border:"none",cursor:"pointer",color:aiBreakingProj===task.id?"#ffa726":"#dde",fontSize:13,fontFamily:"'Heebo',sans-serif",fontWeight:600}}>
                             {aiBreakingProj===task.id?<div className="spinner"/>:"מה עושים?"}
                           </button>
-                          <button onClick={()=>setExpandedProjTask(expandedProjTask===task.id?null:task.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#dde",fontSize:12}}>
+                          <button onClick={()=>setExpandedProjTask(expandedProjTask===task.id?null:task.id)} aria-label={expandedProjTask===task.id?"כווץ":"הרחב"} style={{background:"none",border:"none",cursor:"pointer",color:"#dde",fontSize:12}}>
                             {expandedProjTask===task.id?"▲":"▼"}
                           </button>
-                          <button onClick={()=>deleteProjectTask(openProject.id,task.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#dde",fontSize:14}}>✕</button>
+                          <button onClick={()=>deleteProjectTask(openProject.id,task.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#dde",fontSize:14}} aria-label="מחק משימת פרויקט">✕</button>
                         </div>
                         {totalSubs>0&&(
                           <div style={{height:3,background:"#f0f0f8",margin:"0 14px 8px"}}>
@@ -1592,17 +1301,17 @@ export default function App() {
                           <div style={{padding:"0 14px 12px 14px"}}>
                             {(task.subtasks||[]).map(st=>(
                               <div key={st.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderRight:`2px solid ${st.done?"#4caf50":"#e8e8f2"}`,paddingRight:10,marginRight:-10}}>
-                                <button onClick={()=>toggleProjectSubtask(openProject.id,task.id,st.id)} style={{width:14,height:14,borderRadius:3,border:`1.5px solid ${st.done?"#4caf50":"#dde"}`,background:st.done?"#4caf50":"white",color:"white",cursor:"pointer",fontSize:9,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                                <button onClick={()=>toggleProjectSubtask(openProject.id,task.id,st.id)} aria-label={st.done?"בטל סימון תת-משימה":"סמן תת-משימה כבוצעה"} style={{width:14,height:14,borderRadius:3,border:`1.5px solid ${st.done?"#4caf50":"#dde"}`,background:st.done?"#4caf50":"white",color:"white",cursor:"pointer",fontSize:9,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
                                   {st.done?"✓":""}
                                 </button>
                                 <span style={{flex:1,fontSize:13,color:st.done?"#bbb":"#555",textDecoration:st.done?"line-through":"none"}}>{st.text}</span>
-                                <button onClick={()=>deleteProjectSubtask(openProject.id,task.id,st.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#dde",fontSize:12}}>✕</button>
+                                <button onClick={()=>deleteProjectSubtask(openProject.id,task.id,st.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#dde",fontSize:12}} aria-label="מחק תת-משימה">✕</button>
                               </div>
                             ))}
                             {expandedProjTask===task.id&&(
                               <div style={{display:"flex",gap:6,marginTop:6}}>
                                 <input autoFocus className="edit-inline" style={{fontSize:13}} placeholder="תת-משימה..." value={newProjSubtaskInput[task.id]||""} onChange={e=>setNewProjSubtaskInput(p=>({...p,[task.id]:e.target.value}))} onKeyDown={e=>{if(e.key==="Enter"){addProjectSubtask(openProject.id,task.id,newProjSubtaskInput[task.id]||"");setNewProjSubtaskInput(p=>({...p,[task.id]:""}));}if(e.key==="Escape")setExpandedProjTask(null);}}/>
-                                <button className="add-btn" style={{padding:"4px 10px",fontSize:13}} onClick={()=>{addProjectSubtask(openProject.id,task.id,newProjSubtaskInput[task.id]||"");setNewProjSubtaskInput(p=>({...p,[task.id]:""}));}}>+</button>
+                                <button className="add-btn" style={{padding:"4px 10px",fontSize:13}} aria-label="הוסף תת-משימה" onClick={()=>{addProjectSubtask(openProject.id,task.id,newProjSubtaskInput[task.id]||"");setNewProjSubtaskInput(p=>({...p,[task.id]:""}));}}>+</button>
                               </div>
                             )}
                           </div>
@@ -1624,7 +1333,7 @@ export default function App() {
                           <div style={{fontSize:11,color:"#bbb",fontWeight:600,marginBottom:2}}>{item.date?new Date(item.date+"T00:00:00").toLocaleDateString("he-IL",{day:"numeric",month:"short"}):""}</div>
                           <div style={{fontSize:14,color:"#1a1a2e",fontWeight:500}}>{item.text}</div>
                         </div>
-                        <button onClick={()=>deleteTimelineItem(openProject.id,item.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#dde",fontSize:13}}>✕</button>
+                        <button onClick={()=>deleteTimelineItem(openProject.id,item.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#dde",fontSize:13}} aria-label="מחק אבן דרך">✕</button>
                       </div>
                     ))}
                   </div>
@@ -1671,7 +1380,7 @@ export default function App() {
                   </div>
                   <div style={{display:"flex",gap:8}}>
                     <input className="plain-input" style={{flex:1}} placeholder="רעיון חדש..." value={newBubbleText} onChange={e=>setNewBubbleText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){addBubble(openProject.id,newBubbleText,"user");setNewBubbleText("");}}}/>
-                    <button className="add-btn" onClick={()=>{addBubble(openProject.id,newBubbleText,"user");setNewBubbleText("");}}>+</button>
+                    <button className="add-btn" aria-label="הוסף רעיון" onClick={()=>{addBubble(openProject.id,newBubbleText,"user");setNewBubbleText("");}}>+</button>
                     <button onClick={()=>aiThinkBubbles(openProject.id,openProject.name)} style={{border:`1.5px solid ${accent}`,borderRadius:12,background:"white",color:accent,padding:"0 14px",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontWeight:700,fontSize:13,whiteSpace:"nowrap"}}>
                       {aiThinkingProj?<div className="spinner" style={{borderTopColor:accent,borderColor:`${accent}33`}}/>:"מה אתה חושב? 🤖"}
                     </button>
@@ -1684,13 +1393,13 @@ export default function App() {
                     {(openProject.board||[]).map(item=>(
                       <div key={item.id} style={{background:"white",borderRadius:14,padding:"14px",boxShadow:"0 1px 6px rgba(0,0,0,0.06)",minHeight:100,position:"relative",fontSize:13,color:"#555",lineHeight:1.5}}>
                         {item.text}
-                        <button onClick={()=>deleteBoardItem(openProject.id,item.id)} style={{position:"absolute",top:8,left:8,background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:12}}>✕</button>
+                        <button onClick={()=>deleteBoardItem(openProject.id,item.id)} style={{position:"absolute",top:8,left:8,background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:12}} aria-label="מחק פריט השראה">✕</button>
                       </div>
                     ))}
                   </div>
                   <div style={{display:"flex",gap:8}}>
                     <input className="plain-input" style={{flex:1}} placeholder="הוסיפי השראה..." value={newBoardText} onChange={e=>setNewBoardText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){addBoardItem(openProject.id,newBoardText);setNewBoardText("");}}}/>
-                    <button className="add-btn" onClick={()=>{addBoardItem(openProject.id,newBoardText);setNewBoardText("");}}>+</button>
+                    <button className="add-btn" aria-label="הוסף פריט השראה" onClick={()=>{addBoardItem(openProject.id,newBoardText);setNewBoardText("");}}>+</button>
                   </div>
                 </>)}
 
@@ -1709,18 +1418,23 @@ export default function App() {
           <button key={key}
             className={`side-pill${active?" active-pill":""}`}
             style={{bottom, ...(active?{}:{padding:"0",width:38,height:38,minWidth:38,justifyContent:"center",gap:0})}}
+            aria-label={label}
             onClick={fn}
           >
             <span style={{fontSize:active?14:18}}>{icon}</span>
             {active&&<span>{label}</span>}
           </button>
         ))}
-        <button className="fab" style={{background:accent}} onClick={()=>setShowQuickCapture(true)}>+</button>
+        <button className="fab" style={{background:accent}} aria-label="לכידה מהירה — הוסיפי משימה" onClick={()=>setShowQuickCapture(true)}>+</button>
 
         {/* Voice indicator — always shown when SR available; tap to activate on first use */}
         {voiceAvail&&(
           <div
+            role="button"
+            tabIndex={0}
+            aria-label={voiceState==="off"?"הפעל שליטה קולית":voiceState==="listening"?"מאזין — הקש כדי להשהות":"הקש כדי לדבר"}
             style={{position:"fixed",bottom:90,right:20,zIndex:250,display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer"}}
+            onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();e.currentTarget.click();}}}
             onClick={()=>{
               const r=recognitionRef.current;
               if(!r) return;
@@ -1730,7 +1444,7 @@ export default function App() {
                 sessionStorage.setItem("voice_on","1");
                 voiceModeRef.current="listening";
                 const sayHi=()=>{ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance("כן?"); u.lang="he-IL"; speechSynthesis.speak(u); };
-                try{ r.start(); setVoiceState("listening"); sayHi(); }catch{}
+                try{ r.start(); setVoiceState("listening"); sayHi(); }catch(err){ console.error("voice: failed to start recognition",err); }
               } else if(voiceModeRef.current==="listening"){
                 // Already listening — pause
                 voiceModeRef.current="idle"; setVoiceState("idle");
@@ -1765,7 +1479,7 @@ export default function App() {
             </div>
             <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4}}>
               <div ref={profileMenuRef} style={{position:"relative"}}>
-                <button onClick={()=>setShowProfileMenu(p=>!p)} style={{display:"flex",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:"50%",border:"none",background:accent,cursor:"pointer",color:"white",fontFamily:"'Heebo',sans-serif",fontSize:15,fontWeight:700}}>
+                <button onClick={()=>setShowProfileMenu(p=>!p)} aria-label="תפריט פרופיל" style={{display:"flex",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:"50%",border:"none",background:accent,cursor:"pointer",color:"white",fontFamily:"'Heebo',sans-serif",fontSize:15,fontWeight:700}}>
                   {profiles[activeProfileId]?.name?.charAt(0)||"?"}
                 </button>
                 {showProfileMenu&&(
@@ -1778,7 +1492,7 @@ export default function App() {
                 )}
               </div>
             <div ref={settingsMenuRef} style={{position:"relative"}}>
-              <button onClick={()=>setShowSettingsMenu(p=>!p)} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:"#aaa",padding:"4px 6px",borderRadius:6,lineHeight:1}}>⚙</button>
+              <button onClick={()=>setShowSettingsMenu(p=>!p)} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:"#aaa",padding:"4px 6px",borderRadius:6,lineHeight:1}} aria-label="הגדרות">⚙</button>
               {showSettingsMenu&&(
                 <div className="dropdown-menu settings-dropdown">
                   <button className="dropdown-item" onClick={exportBackup}>📤 גיבוי</button>
@@ -1797,8 +1511,8 @@ export default function App() {
               <button key={t.id} className={`tab-pill${activeTab===t.id?" active":""}`} style={{"--accent":t.color}} onClick={()=>{setActiveTab(t.id);setActiveSubtab(null);}}>
                 <span className="tab-dot" style={{background:t.color}}/>{t.label}
                 {activeTab===t.id&&(<>
-                  <span onClick={e=>{e.stopPropagation();setDefaultTab(t.id);}} style={{fontSize:12,cursor:"pointer",color:profiles[activeProfileId]?.defaultTab===t.id?"#f4a261":"#ddd",marginRight:-2,lineHeight:1}}>★</span>
-                  <span className="icon-btn del" style={{fontSize:11,marginRight:-2,padding:0,minWidth:"unset",minHeight:"unset"}} onClick={e=>{e.stopPropagation();deleteTab(t.id);}}>✕</span>
+                  <span role="button" tabIndex={0} aria-label="קבע ככרטיסייה ברירת מחדל" onClick={e=>{e.stopPropagation();setDefaultTab(t.id);}} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();e.stopPropagation();setDefaultTab(t.id);}}} style={{fontSize:12,cursor:"pointer",color:profiles[activeProfileId]?.defaultTab===t.id?"#f4a261":"#ddd",marginRight:-2,lineHeight:1}}>★</span>
+                  <span className="icon-btn del" role="button" tabIndex={0} aria-label="מחק כרטיסייה" style={{fontSize:11,marginRight:-2,padding:0,minWidth:"unset",minHeight:"unset"}} onClick={e=>{e.stopPropagation();deleteTab(t.id);}} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();e.stopPropagation();deleteTab(t.id);}}}>✕</span>
                 </>)}
               </button>
             ))}
@@ -1806,7 +1520,7 @@ export default function App() {
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
                 <input autoFocus className="plain-input" style={{width:150,fontSize:13,padding:"6px 10px","--accent":"#2d6a4f"}} placeholder="שם הכרטיסייה" value={newTabInput} onChange={e=>setNewTabInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addTab();if(e.key==="Escape")setShowNewTab(false);}}/>
                 <button className="add-btn" style={{padding:"6px 12px",fontSize:13,"--accent":"#2d6a4f"}} onClick={addTab}>הוסף</button>
-                <button className="icon-btn" onClick={()=>setShowNewTab(false)}>✕</button>
+                <button className="icon-btn" aria-label="בטל כרטיסייה חדשה" onClick={()=>setShowNewTab(false)}>✕</button>
               </div>
             ):(
               <button className="ghost-btn" style={{"--accent":"#2d6a4f"}} onClick={()=>setShowNewTab(true)}>+ כרטיסייה חדשה</button>
@@ -1844,14 +1558,14 @@ export default function App() {
               {currentTab.subtabs.map(s=>(
                 <div key={s.id} style={{position:"relative"}}>
                   <button className={`sub-chip${activeSubtab===s.id?" active":""}`} style={{"--accent":accent}} onClick={()=>setActiveSubtab(s.id)}>{s.label}</button>
-                  {activeSubtab===s.id&&<button className="icon-btn del" style={{position:"absolute",top:-5,left:-5,fontSize:10,background:"#f5f5f4",borderRadius:"50%",width:15,height:15,display:"flex",alignItems:"center",justifyContent:"center",padding:0,minWidth:"unset",minHeight:"unset"}} onClick={()=>deleteSubtab(s.id)}>✕</button>}
+                  {activeSubtab===s.id&&<button className="icon-btn del" aria-label="מחק תת-כרטיסייה" style={{position:"absolute",top:-5,left:-5,fontSize:10,background:"#f5f5f4",borderRadius:"50%",width:15,height:15,display:"flex",alignItems:"center",justifyContent:"center",padding:0,minWidth:"unset",minHeight:"unset"}} onClick={()=>deleteSubtab(s.id)}>✕</button>}
                 </div>
               ))}
               {showNewSub?(
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
                   <input autoFocus className="plain-input" style={{width:140,fontSize:13,padding:"5px 10px"}} placeholder="שם תת-כרטיסייה" value={newSubInput} onChange={e=>setNewSubInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addSubtab();if(e.key==="Escape")setShowNewSub(false);}}/>
                   <button className="add-btn" style={{padding:"5px 10px",fontSize:13}} onClick={addSubtab}>הוסף</button>
-                  <button className="icon-btn" onClick={()=>setShowNewSub(false)}>✕</button>
+                  <button className="icon-btn" aria-label="בטל תת-כרטיסייה חדשה" onClick={()=>setShowNewSub(false)}>✕</button>
                 </div>
               ):(
                 <button className="ghost-btn" style={{padding:"4px 12px",fontSize:12}} onClick={()=>setShowNewSub(true)}>+ תת-כרטיסייה</button>
@@ -1867,7 +1581,7 @@ export default function App() {
                 </div>
                 <div style={{display:"flex",gap:8,marginBottom:14}}>
                   <input className="plain-input" style={{flex:1}} placeholder="משימה חדשה..." value={taskInput} onChange={e=>setTaskInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTask()}/>
-                  <button className="add-btn" onClick={addTask}>+</button>
+                  <button className="add-btn" aria-label="הוסף משימה" onClick={addTask}>+</button>
                 </div>
 
                 {allPendingTasks.length===0&&<div className="empty-state">אין משימות פתוחות</div>}
@@ -1896,8 +1610,8 @@ export default function App() {
                     <div key={item.id} className="task-row" style={{opacity:0.45}}>
                       <div style={{width:20,height:20,borderRadius:"50%",border:"2px solid #ddd",background:"white",flexShrink:0,marginTop:1}}/>
                       <div style={{flex:1}}><span style={{fontSize:14,textDecoration:"line-through",color:"#888"}}>{item.text}</span></div>
-                      <button className="icon-btn" style={{color:"#bbb",fontSize:13,fontWeight:700}} onClick={()=>toggleDone("task",item.id)}>↩</button>
-                      <button className="icon-btn del" onClick={()=>deleteItem("task",item.id)}>✕</button>
+                      <button className="icon-btn" style={{color:"#bbb",fontSize:13,fontWeight:700}} aria-label="שחזר משימה" onClick={()=>toggleDone("task",item.id)}>↩</button>
+                      <button className="icon-btn del" aria-label="מחק משימה" onClick={()=>deleteItem("task",item.id)}>✕</button>
                     </div>
                   ))}
                 </>}
@@ -1916,8 +1630,8 @@ export default function App() {
                 <div style={{marginBottom:14}}>
                   <div style={{display:"flex",gap:8,marginBottom:showReminderDates?8:0}}>
                     <input className="plain-input" style={{flex:1}} placeholder="תזכורת חדשה..." value={reminderInput} onChange={e=>setReminderInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addReminder()}/>
-                    <button onClick={()=>setShowReminderDates(p=>!p)} style={{border:`1.5px solid ${showReminderDates?accent:"#e5e5e3"}`,borderRadius:8,background:"white",padding:"0 10px",cursor:"pointer",fontSize:15,color:showReminderDates?accent:"#aaa",transition:"all 0.15s"}}>📅</button>
-                    <button className="add-btn" onClick={addReminder}>+</button>
+                    <button onClick={()=>setShowReminderDates(p=>!p)} aria-label="הצג תאריכי תזכורת" style={{border:`1.5px solid ${showReminderDates?accent:"#e5e5e3"}`,borderRadius:8,background:"white",padding:"0 10px",cursor:"pointer",fontSize:15,color:showReminderDates?accent:"#aaa",transition:"all 0.15s"}}>📅</button>
+                    <button className="add-btn" aria-label="הוסף תזכורת" onClick={addReminder}>+</button>
                   </div>
                   {showReminderDates&&(
                     <>
@@ -1958,7 +1672,7 @@ export default function App() {
                           <div key={item.id} className={cardClass} style={{"--accent":accent}}>
                             <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
                               <div style={{position:"relative",flexShrink:0,paddingTop:1}}>
-                                <button className={`check-circle${completingId===item.id?" popping":""}`} style={{width:20,height:20,borderRadius:"50%",border:"2px solid #ddd",background:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,transition:"all 0.15s","--accent":accent}} onClick={()=>handleComplete("reminder",item.id)}/>
+                                <button className={`check-circle${completingId===item.id?" popping":""}`} aria-label="סיימתי!" style={{width:20,height:20,borderRadius:"50%",border:"2px solid #ddd",background:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,transition:"all 0.15s","--accent":accent}} onClick={()=>handleComplete("reminder",item.id)}/>
                                 {completingId===item.id&&<div className="ring" style={{"--accent":accent}}/>}
                               </div>
                               <div style={{flex:1,minWidth:0}}>
@@ -1984,8 +1698,8 @@ export default function App() {
                                   </div>
                                 )}
                               </div>
-                              <button className="icon-btn" style={{fontSize:18}} onClick={()=>{setEditId(item.id);setEditText(item.text);setEditAlertDate(item.alertDate||"");}}>✎</button>
-                              <button className="icon-btn del" onClick={()=>deleteItem("reminder",item.id)}>✕</button>
+                              <button className="icon-btn" style={{fontSize:18}} aria-label="ערוך תזכורת" onClick={()=>{setEditId(item.id);setEditText(item.text);setEditAlertDate(item.alertDate||"");}}>✎</button>
+                              <button className="icon-btn del" aria-label="מחק תזכורת" onClick={()=>deleteItem("reminder",item.id)}>✕</button>
                             </div>
                           </div>
                         );
@@ -1999,9 +1713,9 @@ export default function App() {
                   {allDoneReminders.map(item=>(
                     <div key={item.id} className="reminder-card" style={{opacity:0.4}}>
                       <div style={{display:"flex",alignItems:"center",gap:10}}>
-                        <button style={{width:20,height:20,borderRadius:"50%",border:"2px solid #aaa",background:"#aaa",color:"white",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,flexShrink:0}} onClick={()=>toggleDone("reminder",item.id)}>✓</button>
+                        <button style={{width:20,height:20,borderRadius:"50%",border:"2px solid #aaa",background:"#aaa",color:"white",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,flexShrink:0}} aria-label="בטל סימון תזכורת" onClick={()=>toggleDone("reminder",item.id)}>✓</button>
                         <span style={{flex:1,fontSize:14,textDecoration:"line-through",color:"#888"}}>{item.text}</span>
-                        <button className="icon-btn del" onClick={()=>deleteItem("reminder",item.id)}>✕</button>
+                        <button className="icon-btn del" aria-label="מחק תזכורת" onClick={()=>deleteItem("reminder",item.id)}>✕</button>
                       </div>
                     </div>
                   ))}
