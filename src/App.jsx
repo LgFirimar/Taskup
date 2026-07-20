@@ -351,7 +351,12 @@ export default function App() {
         else if (rule.dateFrom) { q += `after:${rule.dateFrom.replace(/-/g,"/")} `; }
         else { q += "newer_than:30d "; }
         if (rule.sender) q += `from:${rule.sender} `;
-        if (rule.subject) q += `subject:${rule.subject} `;
+        if (rule.subject) {
+          // Quote multi-word terms so Gmail matches the phrase, not each word separately.
+          const term = rule.subject.includes(" ") ? `"${rule.subject}"` : rule.subject;
+          // scope "all" = also search the email body, not just the subject line.
+          q += rule.searchScope === "all" ? `${term} ` : `subject:${term} `;
+        }
         q = q.trim();
 
         const searchRes = await fetch(
@@ -1128,8 +1133,18 @@ export default function App() {
                     <button onClick={()=>{setShowNewRule(false);setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false});}} style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",fontSize:18,lineHeight:1}} aria-label="בטל">✕</button>
                   </div>
                   <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                    <input className="plain-input" style={{fontSize:13}} placeholder="שולח (לדוג' momence.com)" value={newRule.sender} onChange={e=>setNewRule(p=>({...p,sender:e.target.value}))}/>
-                    <input className="plain-input" style={{fontSize:13}} placeholder="נושא (מילות מפתח, אופציונלי)" value={newRule.subject} onChange={e=>setNewRule(p=>({...p,subject:e.target.value}))}/>
+                    <input className="plain-input" style={{fontSize:13}} placeholder="שולח (לדוג' momence.com, אופציונלי)" value={newRule.sender} onChange={e=>setNewRule(p=>({...p,sender:e.target.value}))}/>
+                    <input className="plain-input" style={{fontSize:13}} placeholder="מילות מפתח (בלי שולח — יחפש רק לפי המילים)" value={newRule.subject} onChange={e=>setNewRule(p=>({...p,subject:e.target.value}))}/>
+                    {newRule.subject&&(
+                      <div style={{display:"flex",alignItems:"center",gap:8,background:"#f9f9f8",borderRadius:10,padding:"8px 12px"}}>
+                        <label style={{fontSize:12,color:"#888",whiteSpace:"nowrap"}}>לחפש:</label>
+                        <div style={{display:"flex",gap:6}}>
+                          {[["subject","רק בכותרת"],["all","גם בתוכן המייל"]].map(([v,l])=>(
+                            <button key={v} onClick={()=>setNewRule(p=>({...p,searchScope:v}))} style={{padding:"4px 10px",borderRadius:20,border:`1.5px solid ${(newRule.searchScope||"subject")===v?accent:"#dde"}`,background:(newRule.searchScope||"subject")===v?`${accent}15`:"white",color:(newRule.searchScope||"subject")===v?accent:"#888",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,fontWeight:(newRule.searchScope||"subject")===v?700:400}}>{l}</button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {/* Date range */}
                     <div style={{display:"flex",alignItems:"center",gap:8,background:"#f9f9f8",borderRadius:10,padding:"8px 12px"}}>
                       <label style={{fontSize:12,color:"#888",whiteSpace:"nowrap"}}>תקופה:</label>
@@ -1161,7 +1176,7 @@ export default function App() {
                 <div key={rule.id} style={{background:"white",borderRadius:12,padding:"12px 14px",marginBottom:8,boxShadow:"0 1px 6px rgba(0,0,0,0.05)",display:"flex",alignItems:"center",gap:10,borderRight:`3px solid ${accent}`}}>
                   <div style={{flex:1}}>
                     {rule.sender&&<div style={{fontSize:13,fontWeight:600}}>מ: {rule.sender}</div>}
-                    {rule.subject&&<div style={{fontSize:12,color:"#888"}}>נושא: {rule.subject}</div>}
+                    {rule.subject&&<div style={{fontSize:12,color:"#888"}}>מילות מפתח: {rule.subject} ({rule.searchScope==="all"?"כותרת+תוכן":"כותרת בלבד"})</div>}
                     <div style={{fontSize:11,color:accent,marginTop:2}}>
                       {{"bullets":"• נקודות","summary":"סיכום","tasks":"משימות","dates":"תאריכים"}[rule.format]}
                       {" • "}
