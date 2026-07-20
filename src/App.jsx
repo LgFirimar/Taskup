@@ -311,6 +311,15 @@ export default function App() {
           scope: "https://www.googleapis.com/auth/gmail.readonly",
           callback: (response) => {
             if (response.access_token) {
+              // Google's consent screen lets the user un-check individual permissions —
+              // if she unchecked the Gmail one, we still get a token, but every Gmail
+              // API call will fail with 403 later. Catch that here instead of leaving
+              // her to hit a confusing 403 when she tries to summarize.
+              if (response.scope && !response.scope.includes("gmail.readonly")) {
+                console.error("Gmail auth: token granted without gmail.readonly scope",response.scope);
+                setGmailAuthError("ההתחברות הצליחה אבל לא אישרת את ההרשאה לקריאת Gmail (יכול להיות שהצ'קבוקס של \"קריאת המייל שלך\" בוטל בזמן האישור). נסי להתחבר שוב ווודאי שכל ההרשאות מסומנות.");
+                return;
+              }
               localStorage.setItem("gmail_token", response.access_token);
               setGmailToken(response.access_token);
               setGmailAuthError("");
@@ -397,6 +406,15 @@ export default function App() {
           disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי לסכם שוב.");
           setEmailLoading(false);
           return;
+        }
+        if (searchRes.status === 403) {
+          // 403 almost always means Gmail API access itself is blocked — not a bad
+          // query. Surface Google's own error message (e.g. "Gmail API has not been
+          // used in project ... before or it is disabled", or "Request had
+          // insufficient authentication scopes") instead of a bare status code.
+          let detail = "";
+          try { const errBody = await searchRes.json(); detail = errBody?.error?.message || ""; } catch { /* ignore parse failure */ }
+          throw new Error(`אין הרשאה (403)${detail?`: ${detail}`:""} — ודאי ש-Gmail API מופעל בפרויקט ב-Google Cloud Console, ושאישרת את הרשאת קריאת המייל בזמן ההתחברות.`);
         }
         if (!searchRes.ok) throw new Error(`Gmail search failed: ${searchRes.status}`);
         const searchData = await searchRes.json();
