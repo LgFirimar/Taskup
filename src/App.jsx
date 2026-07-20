@@ -49,6 +49,8 @@ export default function App() {
 
   // ── Features ──────────────────────────────────────────────────────────────
   const [completingId,setCompletingId] = useState(null);
+  const [showDoneTasks,setShowDoneTasks] = useState(false);
+  const [showDoneReminders,setShowDoneReminders] = useState(false);
   const [bigCelebrateId,setBigCelebrateId] = useState(null);
   const [expandedTaskId,setExpandedTaskId] = useState(null);
   const [subtaskInput,setSubtaskInput] = useState("");
@@ -106,6 +108,7 @@ export default function App() {
   const [voiceLabel,setVoiceLabel] = useState("");
   const [voiceDebug,setVoiceDebug] = useState("");
   const [voiceAvail] = useState(()=>typeof window!=="undefined"&&!!(window.SpeechRecognition||window.webkitSpeechRecognition));
+  const [showVoiceHelp,setShowVoiceHelp] = useState(false);
   const voiceModeRef = useRef("idle");
   const voiceActiveRef = useRef(false);
   const recognitionRef = useRef(null);
@@ -897,7 +900,11 @@ export default function App() {
     @media(max-width:640px){.main-grid{grid-template-columns:1fr;gap:16px;}.dropdown-menu{max-width:calc(100vw - 24px);}}
     @media screen and (-webkit-min-device-pixel-ratio:0){input,textarea,select{font-size:max(16px,1em) !important;}}
     @keyframes voicePulse{0%,100%{box-shadow:0 0 0 4px rgba(239,83,80,0.25)}50%{box-shadow:0 0 0 10px rgba(239,83,80,0.08)}}
-    @keyframes appFadeIn{0%{opacity:0;transform:scale(1.04)}100%{opacity:1;transform:scale(1)}}
+    /* opacity-only (no transform) — a transform here, even a completed one via
+       animation-fill-mode, would make this element a new containing block for
+       all its position:fixed descendants (side icons, FAB, add bars, overlays),
+       so they'd scroll away with the page instead of staying pinned to the screen. */
+    @keyframes appFadeIn{0%{opacity:0}100%{opacity:1}}
   `;
 
   // ── Splash ─────────────────────────────────────────────────────────────────
@@ -1567,6 +1574,45 @@ export default function App() {
           </div>
         )}
 
+        {/* Voice commands help */}
+        {showVoiceHelp&&(
+          <div className="alert-modal" onClick={()=>setShowVoiceHelp(false)}>
+            <div className="alert-card" onClick={e=>e.stopPropagation()}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:20}}>🎙️</span>
+                <span style={{fontWeight:700,fontSize:16,flex:1}}>פקודות קוליות</span>
+                <button onClick={()=>setShowVoiceHelp(false)} aria-label="סגור" style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",fontSize:18,lineHeight:1}}>✕</button>
+              </div>
+              <div style={{overflowY:"auto",flex:1,display:"flex",flexDirection:"column",gap:14,fontSize:13,lineHeight:1.6}}>
+                {[
+                  {title:"מעבר בין כרטיסיות", examples:['"לשונית ילדים"', '"עברי לעבודה"']},
+                  {title:"רשימות קניות", examples:['"קניות" — פותח את תפריט הרשימות', '"רשימת סופר" — פותח או יוצר רשימה בשם הזה', '"אילו רשימות" / "הצג רשימות" — מקריא את שמות הרשימות']},
+                  {title:"הוספה/הסרה מרשימה פתוחה", examples:['"תוסיפי חלב" — כל טקסט חופשי נחשב תוספת כשרשימה פתוחה', '"מחקי חלב" / "תורידי חלב" / "למחוק חלב"']},
+                  {title:"פתקים", examples:['"פתקים" — פותח את תפריט הפתקים', '"פתק קניות לחג" — פותח או יוצר פתק', '"תכתבי X" — מוסיף שורה לפתק הפתוח']},
+                  {title:"משימות ותזכורות", examples:['"משימה לקנות מתנה"', '"תזכורת להתקשר לרופא"']},
+                  {title:"סימון כבוצע", examples:['"סמני לקנות מתנה"', '"סיימתי להתקשר לרופא"']},
+                  {title:"הקראה", examples:['"תקריאי" / "הקרא" — מקריא את כל המשימות והתזכורות הפתוחות בכרטיסייה', '"תקריאי X" — מקריא פריט ספציפי', '"מה יש" — ברשימת קניות פתוחה, מקריא את הפריטים']},
+                  {title:"ניווט כללי", examples:['"סגור" / "חזרה" / "אחורה" — סוגר רשימה/פתק פתוח']},
+                ].map((g,i)=>(
+                  <div key={i}>
+                    <div style={{fontWeight:700,fontSize:13,marginBottom:4,color:"#1a1a2e"}}>{g.title}</div>
+                    {g.examples.map((ex,j)=>(
+                      <div key={j} style={{color:"#666",marginBottom:2}}>{ex}</div>
+                    ))}
+                  </div>
+                ))}
+                <div style={{fontSize:12,color:"#aaa",borderTop:"1px solid #f0f0f8",paddingTop:10}}>
+                  לוחצים על סמל המיקרופון כדי להתחיל להאזין, ואז אומרים אחת מהפקודות למעלה.
+                </div>
+              </div>
+              <button onClick={()=>setShowVoiceHelp(false)}
+                style={{background:"#1a1a1a",color:"white",border:"none",borderRadius:10,padding:"11px 0",fontSize:15,fontWeight:600,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>
+                סגור
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <div className="app-header">
           <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",paddingBottom:10}}>
@@ -1596,6 +1642,10 @@ export default function App() {
                   <button className="dropdown-item" onClick={importBackup}>📥 ייבוא גיבוי</button>
                   <div className="dropdown-divider"/>
                   <button className="dropdown-item" onClick={shareWhatsApp}>💬 שתף ב-WhatsApp</button>
+                  {voiceAvail&&<>
+                    <div className="dropdown-divider"/>
+                    <button className="dropdown-item" onClick={()=>{setShowSettingsMenu(false);setShowVoiceHelp(true);}}>🎙️ פקודות קוליות</button>
+                  </>}
                 </div>
               )}
             </div>
@@ -1702,8 +1752,10 @@ export default function App() {
                 )}
 
                 {allDoneTasks.length>0&&<>
-                  <div className="section-label">הושלמו ({allDoneTasks.length})</div>
-                  {allDoneTasks.map(item=>(
+                  <button className="section-label" onClick={()=>setShowDoneTasks(p=>!p)} style={{background:"none",border:"none",padding:0,width:"100%",display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>
+                    הושלמו ({allDoneTasks.length}) <span style={{fontSize:9}}>{showDoneTasks?"▲":"▼"}</span>
+                  </button>
+                  {showDoneTasks&&allDoneTasks.map(item=>(
                     <div key={item.id} className="task-row" style={{opacity:0.45}}>
                       <div style={{width:20,height:20,borderRadius:"50%",border:"2px solid #ddd",background:"white",flexShrink:0,marginTop:1}}/>
                       <div style={{flex:1}}><span style={{fontSize:14,textDecoration:"line-through",color:"#888"}}>{item.text}</span></div>
@@ -1806,8 +1858,10 @@ export default function App() {
                 })}
 
                 {allDoneReminders.length>0&&<>
-                  <div className="section-label">הושלמו ({allDoneReminders.length})</div>
-                  {allDoneReminders.map(item=>(
+                  <button className="section-label" onClick={()=>setShowDoneReminders(p=>!p)} style={{background:"none",border:"none",padding:0,width:"100%",display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>
+                    הושלמו ({allDoneReminders.length}) <span style={{fontSize:9}}>{showDoneReminders?"▲":"▼"}</span>
+                  </button>
+                  {showDoneReminders&&allDoneReminders.map(item=>(
                     <div key={item.id} className="reminder-card" style={{opacity:0.4}}>
                       <div style={{display:"flex",alignItems:"center",gap:10}}>
                         <button style={{width:20,height:20,borderRadius:"50%",border:"2px solid #aaa",background:"#aaa",color:"white",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,flexShrink:0}} aria-label="בטל סימון תזכורת" onClick={()=>toggleDone("reminder",item.id)}>✓</button>
