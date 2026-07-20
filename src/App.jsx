@@ -93,6 +93,7 @@ export default function App() {
   const [newRule,setNewRule] = useState({sender:"",subject:"",format:"bullets"});
   const [gmailClientId,setGmailClientId] = useState(()=>localStorage.getItem("gmail_client_id")||"");
   const [showClientIdInput,setShowClientIdInput] = useState(false);
+  const [gmailAuthError,setGmailAuthError] = useState("");
 
   // ── Reminder alerts ───────────────────────────────────────────────────────
   const [alertReminders] = useState(computeInitialAlerts);
@@ -277,20 +278,41 @@ export default function App() {
   const connectGmail = () => {
     const clientId = gmailClientId.trim();
     if (!clientId) { setShowClientIdInput(true); return; }
+    setGmailAuthError("");
 
     // Load Google Identity Services script if not already loaded
     const initGIS = () => {
-      const client = window.google.accounts.oauth2.initTokenClient({
-        client_id: clientId,
-        scope: "https://www.googleapis.com/auth/gmail.readonly",
-        callback: (response) => {
-          if (response.access_token) {
-            localStorage.setItem("gmail_token", response.access_token);
-            setGmailToken(response.access_token);
-          }
-        },
-      });
-      client.requestAccessToken();
+      try{
+        const client = window.google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: "https://www.googleapis.com/auth/gmail.readonly",
+          callback: (response) => {
+            if (response.access_token) {
+              localStorage.setItem("gmail_token", response.access_token);
+              setGmailToken(response.access_token);
+              setGmailAuthError("");
+            } else {
+              console.error("Gmail auth: no access_token in response",response);
+              setGmailAuthError("החיבור נכשל — ודאי שה-Client ID נכון ונסי שוב.");
+              setShowClientIdInput(true);
+            }
+          },
+          error_callback: (err) => {
+            console.error("Gmail auth error",err);
+            setGmailAuthError(
+              err?.type==="popup_closed"
+                ? "החלון נסגר לפני שהושלם החיבור. נסי שוב."
+                : "החיבור ל-Gmail נכשל — כנראה שה-Client ID לא נכון. ודאי אותו ונסי שוב."
+            );
+            setShowClientIdInput(true);
+          },
+        });
+        client.requestAccessToken();
+      }catch(err){
+        console.error("Gmail auth: failed to init token client",err);
+        setGmailAuthError("החיבור נכשל — ודאי שה-Client ID תקין ונסי שוב.");
+        setShowClientIdInput(true);
+      }
     };
 
     if (window.google?.accounts?.oauth2) {
@@ -299,11 +321,17 @@ export default function App() {
       const script = document.createElement("script");
       script.src = "https://accounts.google.com/gsi/client";
       script.onload = initGIS;
+      script.onerror = (err) => {
+        console.error("Gmail auth: failed to load Google Identity Services script",err);
+        setGmailAuthError("לא הצלחתי לטעון את שירות ההתחברות של Google. בדקי את החיבור לאינטרנט ונסי שוב.");
+      };
       document.head.appendChild(script);
     }
   };
 
-  const disconnectGmail = () => { setGmailToken(null); localStorage.removeItem("gmail_token"); setEmailSummaries([]); };
+  const disconnectGmail = () => { setGmailToken(null); localStorage.removeItem("gmail_token"); setEmailSummaries([]); setGmailAuthError(""); };
+
+  const editGmailClientId = () => { setGmailAuthError(""); setShowClientIdInput(true); };
 
   const fetchAndSummarize = async () => {
     if (!gmailToken || emailRules.length === 0) return;
@@ -1025,6 +1053,9 @@ export default function App() {
                 חזרה
               </button>
               <span style={{fontWeight:800,fontSize:17,flex:1}}>📧 סיכומי מייל</span>
+              {gmailClientId&&!showClientIdInput&&(
+                <button onClick={editGmailClientId} aria-label="שנה Client ID" style={{background:"none",border:"none",fontSize:12,color:"#999",cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginLeft:4}}>שנה Client ID</button>
+              )}
               {gmailToken
                 ? <button onClick={disconnectGmail} style={{background:"none",border:"none",fontSize:12,color:"#e07070",cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>התנתק</button>
                 : <button onClick={connectGmail} style={{background:"#4285f4",color:"white",border:"none",borderRadius:10,padding:"6px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>התחבר ל-Gmail</button>
@@ -1033,10 +1064,25 @@ export default function App() {
 
             <div style={{flex:1,overflowY:"auto",padding:20}}>
 
+              {/* Auth error banner */}
+              {gmailAuthError&&!showClientIdInput&&(
+                <div style={{background:"#fef2f2",border:"1.5px solid #fca5a5",borderRadius:12,padding:"10px 14px",marginBottom:16,fontSize:13,color:"#b91c1c",display:"flex",alignItems:"center",gap:8}}>
+                  <span>⚠️</span>
+                  <span style={{flex:1}}>{gmailAuthError}</span>
+                  <button onClick={editGmailClientId} style={{background:"none",border:"none",color:"#b91c1c",fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,textDecoration:"underline",flexShrink:0}}>תקני</button>
+                </div>
+              )}
+
               {/* Client ID setup */}
               {showClientIdInput&&(
                 <div style={{background:"#fffbeb",border:"1.5px solid #fcd34d",borderRadius:14,padding:16,marginBottom:16}}>
-                  <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>🔑 Google OAuth Client ID</div>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                    <div style={{fontSize:13,fontWeight:700}}>🔑 Google OAuth Client ID</div>
+                    <button onClick={()=>{setShowClientIdInput(false);setGmailAuthError("");}} aria-label="סגור" style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",fontSize:16,lineHeight:1}}>✕</button>
+                  </div>
+                  {gmailAuthError&&(
+                    <div style={{fontSize:12,color:"#b91c1c",background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:8,padding:"6px 10px",marginBottom:10}}>⚠️ {gmailAuthError}</div>
+                  )}
                   <div style={{fontSize:12,color:"#666",marginBottom:10,lineHeight:1.6}}>
                     נדרש Client ID מ-Google Cloud Console:<br/>
                     1. כנסי ל-console.cloud.google.com<br/>
@@ -1046,7 +1092,7 @@ export default function App() {
                     5. העתיקי את ה-Client ID לכאן
                   </div>
                   <div style={{display:"flex",gap:8}}>
-                    <input className="plain-input" style={{flex:1,fontSize:13}} placeholder="xxxxxxxx.apps.googleusercontent.com" value={gmailClientId} onChange={e=>setGmailClientId(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(localStorage.setItem("gmail_client_id",gmailClientId),setShowClientIdInput(false),connectGmail())}/>
+                    <input autoFocus className="plain-input" style={{flex:1,fontSize:13}} placeholder="xxxxxxxx.apps.googleusercontent.com" value={gmailClientId} onChange={e=>setGmailClientId(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){localStorage.setItem("gmail_client_id",gmailClientId);setShowClientIdInput(false);connectGmail();}if(e.key==="Escape"){setShowClientIdInput(false);setGmailAuthError("");}}}/>
                     <button className="add-btn" onClick={()=>{localStorage.setItem("gmail_client_id",gmailClientId);setShowClientIdInput(false);connectGmail();}}>אישור</button>
                   </div>
                 </div>
