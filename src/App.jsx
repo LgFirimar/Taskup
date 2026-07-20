@@ -349,7 +349,7 @@ export default function App() {
         let q = "";
         if (rule.dateAll) { /* no date filter */ }
         else if (rule.dateFrom) { q += `after:${rule.dateFrom.replace(/-/g,"/")} `; }
-        else { q += "newer_than:7d "; }
+        else { q += "newer_than:30d "; }
         if (rule.sender) q += `from:${rule.sender} `;
         if (rule.subject) q += `subject:${rule.subject} `;
         q = q.trim();
@@ -401,7 +401,7 @@ export default function App() {
     setEmailSummaries(summaries);
     if (summaries.length === 0) {
       if (threadsFound === 0) {
-        setEmailStatusMsg("לא נמצאו מיילים תואמים לחוקים. בדקי שהשולח/הנושא מדויקים, או סמני \"כל המיילים\" בעריכת החוק — כברירת מחדל מחפשים רק 7 ימים אחורה.");
+        setEmailStatusMsg("לא נמצאו מיילים תואמים לחוקים. בדקי שהשולח/הנושא מדויקים, או סמני \"כל המיילים\" בעריכת החוק — כברירת מחדל מחפשים רק 30 ימים אחורה.");
       } else if (summarizeFailures > 0) {
         setEmailStatusMsg("נמצאו מיילים תואמים, אבל הסיכום נכשל. נסי שוב בעוד רגע — אם זה ממשיך לקרות ייתכן שיש בעיה בשרת הסיכום.");
       } else {
@@ -1138,7 +1138,7 @@ export default function App() {
                       </label>
                       {!newRule.dateAll&&<input type="date" className="plain-input" style={{flex:1,fontSize:12,padding:"4px 8px",colorScheme:"light"}} value={newRule.dateFrom||""} onChange={e=>setNewRule(p=>({...p,dateFrom:e.target.value}))} placeholder="מתאריך"/>}
                     </div>
-                    {!newRule.dateAll&&!newRule.dateFrom&&<div style={{fontSize:11,color:"#aaa",marginTop:-4}}>בלי תאריך ובלי "כל המיילים" — מחפש רק 7 הימים האחרונים.</div>}
+                    {!newRule.dateAll&&!newRule.dateFrom&&<div style={{fontSize:11,color:"#aaa",marginTop:-4}}>בלי תאריך ובלי "כל המיילים" — מחפש רק 30 הימים האחרונים.</div>}
                     <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                       {[["bullets","• נקודות"],["summary","📝 סיכום"],["tasks","✅ משימות"],["dates","📅 תאריכים"]].map(([v,l])=>(
                         <button key={v} onClick={()=>setNewRule(p=>({...p,format:v}))} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${newRule.format===v?accent:"#dde"}`,background:newRule.format===v?`${accent}15`:"white",color:newRule.format===v?accent:"#888",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,fontWeight:newRule.format===v?700:400}}>{l}</button>
@@ -1165,7 +1165,7 @@ export default function App() {
                     <div style={{fontSize:11,color:accent,marginTop:2}}>
                       {{"bullets":"• נקודות","summary":"סיכום","tasks":"משימות","dates":"תאריכים"}[rule.format]}
                       {" • "}
-                      {rule.dateAll?"כל המיילים":rule.dateFrom?`מ-${formatDate(rule.dateFrom)}`:"7 ימים אחרונים"}
+                      {rule.dateAll?"כל המיילים":rule.dateFrom?`מ-${formatDate(rule.dateFrom)}`:"30 ימים אחרונים"}
                     </div>
                   </div>
                   <button onClick={()=>{setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false,...rule});setShowNewRule(true);}} style={{background:"none",border:"none",color:"#bbb",cursor:"pointer",fontSize:15}} aria-label="ערוך חוק">✎</button>
