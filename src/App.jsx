@@ -352,7 +352,7 @@ export default function App() {
     }
   };
 
-  const disconnectGmail = () => { setGmailToken(null); localStorage.removeItem("gmail_token"); setEmailSummaries([]); setGmailAuthError(""); };
+  const disconnectGmail = (message="") => { setGmailToken(null); localStorage.removeItem("gmail_token"); setEmailSummaries([]); setGmailAuthError(message); };
 
   const editGmailClientId = () => { setGmailAuthError(""); setShowClientIdInput(true); };
 
@@ -363,7 +363,9 @@ export default function App() {
     const summaries = [];
     let threadsFound = 0;
     let summarizeFailures = 0;
+    const ruleDebug = []; // per-rule diagnostics: what we searched for and what came back
     for (const rule of emailRules) {
+      const ruleLabel = [rule.sender&&`מ: ${rule.sender}`, rule.subject&&`מילים: ${rule.subject}`].filter(Boolean).join(" | ") || "(חוק ללא תנאים)";
       try {
         // Build Gmail search query. Note: no "in:inbox" restriction — Gmail's
         // default search already excludes Spam/Trash, but still matches mail
@@ -372,7 +374,13 @@ export default function App() {
         if (rule.dateAll) { /* no date filter */ }
         else if (rule.dateFrom) { q += `after:${rule.dateFrom.replace(/-/g,"/")} `; }
         else { q += "newer_than:30d "; }
-        if (rule.sender) q += `from:${rule.sender} `;
+        if (rule.sender) {
+          // Quote multi-word senders (e.g. a display name) — otherwise Gmail
+          // treats "from:יוסי כהן" as from:יוסי AND a separate required word
+          // "כהן" anywhere in the email, which usually matches nothing.
+          const senderTerm = rule.sender.includes(" ") ? `"${rule.sender}"` : rule.sender;
+          q += `from:${senderTerm} `;
+        }
         if (rule.subject) {
           // Quote multi-word terms so Gmail matches the phrase, not each word separately.
           const term = rule.subject.includes(" ") ? `"${rule.subject}"` : rule.subject;
@@ -385,11 +393,16 @@ export default function App() {
           `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=5`,
           { headers: { Authorization: `Bearer ${gmailToken}` } }
         );
-        if (searchRes.status === 401) { disconnectGmail(); setEmailLoading(false); return; }
+        if (searchRes.status === 401) {
+          disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי לסכם שוב.");
+          setEmailLoading(false);
+          return;
+        }
         if (!searchRes.ok) throw new Error(`Gmail search failed: ${searchRes.status}`);
         const searchData = await searchRes.json();
         const threads = searchData.threads || [];
         threadsFound += threads.length;
+        ruleDebug.push(`${ruleLabel} → שאילתה: "${q}" → ${threads.length} תוצאות`);
 
         for (const thread of threads.slice(0, 3)) {
           const tRes = await fetch(
@@ -423,12 +436,19 @@ export default function App() {
           const sumData = await sumRes.json();
           summaries.push({ id: thread.id, subject, sender, date, summary: sumData.result, format: rule.format, ruleId: rule.id });
         }
-      } catch(e) { console.error(e); summarizeFailures++; }
+      } catch(e) {
+        console.error(e);
+        summarizeFailures++;
+        ruleDebug.push(`${ruleLabel} → שגיאה: ${e.message}`);
+      }
     }
     setEmailSummaries(summaries);
     if (summaries.length === 0) {
       if (threadsFound === 0) {
-        setEmailStatusMsg("לא נמצאו מיילים תואמים לחוקים. בדקי שהשולח/הנושא מדויקים, או סמני \"כל המיילים\" בעריכת החוק — כברירת מחדל מחפשים רק 30 ימים אחורה.");
+        setEmailStatusMsg(
+          "לא נמצאו מיילים תואמים לחוקים. בדקי שהשולח/הנושא מדויקים, או סמני \"כל המיילים\" בעריכת החוק — כברירת מחדל מחפשים רק 30 ימים אחורה.\n\nפירוט לפי חוק:\n"
+          + ruleDebug.map(d=>`• ${d}`).join("\n")
+        );
       } else if (summarizeFailures > 0) {
         setEmailStatusMsg("נמצאו מיילים תואמים, אבל הסיכום נכשל. נסי שוב בעוד רגע — אם זה ממשיך לקרות ייתכן שיש בעיה בשרת הסיכום.");
       } else {
@@ -1117,7 +1137,7 @@ export default function App() {
                 <div style={{background:"#fef2f2",border:"1.5px solid #fca5a5",borderRadius:12,padding:"10px 14px",marginBottom:16,fontSize:13,color:"#b91c1c",display:"flex",alignItems:"center",gap:8}}>
                   <span>⚠️</span>
                   <span style={{flex:1}}>{gmailAuthError}</span>
-                  <button onClick={editGmailClientId} style={{background:"none",border:"none",color:"#b91c1c",fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,textDecoration:"underline",flexShrink:0}}>תקני</button>
+                  <button onClick={connectGmail} style={{background:"none",border:"none",color:"#b91c1c",fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,textDecoration:"underline",flexShrink:0}}>התחברי מחדש</button>
                 </div>
               )}
 
@@ -1225,7 +1245,7 @@ export default function App() {
 
               {/* Status message from the last sync attempt */}
               {emailStatusMsg&&!emailLoading&&(
-                <div style={{background:"#fffbeb",border:"1.5px solid #fcd34d",borderRadius:12,padding:"10px 14px",marginBottom:16,fontSize:13,color:"#92400e",lineHeight:1.6}}>
+                <div style={{background:"#fffbeb",border:"1.5px solid #fcd34d",borderRadius:12,padding:"10px 14px",marginBottom:16,fontSize:13,color:"#92400e",lineHeight:1.6,whiteSpace:"pre-line"}}>
                   ℹ️ {emailStatusMsg}
                 </div>
               )}
