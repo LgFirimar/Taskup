@@ -1,6 +1,18 @@
 import { useEffect } from "react";
 import { uid, today } from "../utils";
 
+// Canonical trigger word each built-in action responds to — used to rewrite a
+// user-defined alias phrase into a real command the dispatcher below already
+// understands (e.g. alias "תרשמי" for action "task" turns "תרשמי לקנות חלב"
+// into "משימה לקנות חלב", which the existing taskQ regex then handles as usual).
+const ACTION_CANON = {
+  task: "משימה",
+  reminder: "תזכורת",
+  done: "סמני",
+  read: "תקריאי",
+  close: "סגור",
+};
+
 // Sets up Hebrew voice control via the Web Speech API and wires spoken commands
 // (navigate tabs, open/create shopping lists & notes, add/remove items, add
 // tasks/reminders, mark done, read items aloud, etc.) to the app's state.
@@ -12,6 +24,7 @@ export function useVoiceCommands({
   showSplash,
   recognitionRef, voiceActiveRef, voiceModeRef,
   openListIdRef, openListTypeRef, profilesRef, tabsRef, activeTabRef, activeSubtabRef, activeProfileIdRef,
+  customCommandsRef,
   setVoiceLabel, setVoiceDebug,
   setProfiles, setOpenListId, setOpenListType, setShowListsMenu, setActiveTab, setActiveSubtab,
 }) {
@@ -52,7 +65,7 @@ export function useVoiceCommands({
       }));
     };
 
-    const executeCommand=(text,isFinal=false)=>{
+    const executeCommand=(text,isFinal=false,skipCustom=false)=>{
       const curTabs=tabsRef.current;
       const curActiveTab=activeTabRef.current;
       const curActiveSubtab=activeSubtabRef.current;
@@ -62,6 +75,37 @@ export function useVoiceCommands({
       const curTab=curTabs.find(t=>t.id===curActiveTab)||null;
       const curSubtab=curActiveSubtab&&curTab?curTab.subtabs.find(s=>s.id===curActiveSubtab):null;
       const curCtx=curSubtab||curTab;
+
+      // פקודות מותאמות אישית — כינויים (alias) לפעולות קיימות וקיצורי דרך (shortcut)
+      // קבועים. skipCustom מונע לולאה אינסופית כשמכנים מילת-מפתח שמתאימה לעצמה.
+      if(!skipCustom){
+        const customCmds=customCommandsRef?.current||[];
+        for(const c of customCmds){
+          const p=(c.phrase||"").trim().toLowerCase();
+          if(!p||!text.includes(p)) continue;
+          if(c.kind==="shortcut"){
+            const name=(c.targetName||"").trim();
+            if(!name) continue;
+            if(c.targetType==="tab"){
+              const t=curTabs.find(tb=>tb.label===name||tb.label.includes(name)||name.includes(tb.label));
+              if(t){ setActiveTab(t.id);setActiveSubtab(null); flash(`📑 ${t.label}`); say(t.label); return true; }
+            }else if(c.targetType==="shopping"){
+              const l=shopLists.find(li=>li.name===name||li.name.includes(name)||name.includes(li.name));
+              if(l){ setOpenListId(l.id);setOpenListType("shopping");setShowListsMenu(null); flash(`🛒 ${l.name}`); say(l.name); return true; }
+            }else if(c.targetType==="notes"){
+              const n=noteLists.find(nt=>nt.name===name||nt.name.includes(name)||name.includes(nt.name));
+              if(n){ setOpenListId(n.id);setOpenListType("notes");setShowListsMenu(null); flash(`📝 ${n.name}`); say(n.name); return true; }
+            }
+            continue;
+          }else{
+            const canon=ACTION_CANON[c.action];
+            if(!canon) continue;
+            const rest=text.split(p).join("").trim();
+            const rewritten=c.action==="close"?canon:(rest?`${canon} ${rest}`:canon);
+            return executeCommand(rewritten,isFinal,true);
+          }
+        }
+      }
 
       // בדיקה — פקודת דיבוג
       if(text.includes("בדיקה")){

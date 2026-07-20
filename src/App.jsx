@@ -109,6 +109,12 @@ export default function App() {
   const [voiceDebug,setVoiceDebug] = useState("");
   const [voiceAvail] = useState(()=>typeof window!=="undefined"&&!!(window.SpeechRecognition||window.webkitSpeechRecognition));
   const [showVoiceHelp,setShowVoiceHelp] = useState(false);
+  const [customVoiceCommands,setCustomVoiceCommands] = useState(()=>{
+    try{ return JSON.parse(localStorage.getItem("voice_custom_commands"))||[]; }catch{ return []; }
+  });
+  const [showAddVoiceCmd,setShowAddVoiceCmd] = useState(false);
+  const [newVoiceCmd,setNewVoiceCmd] = useState({kind:"alias",phrase:"",action:"task",targetType:"tab",targetName:""});
+  const customCommandsRef = useRef([]);
   const voiceModeRef = useRef("idle");
   const voiceActiveRef = useRef(false);
   const recognitionRef = useRef(null);
@@ -143,12 +149,25 @@ export default function App() {
   useEffect(()=>{ activeTabRef.current=activeTab; },[activeTab]);
   useEffect(()=>{ activeSubtabRef.current=activeSubtab; },[activeSubtab]);
   useEffect(()=>{ activeProfileIdRef.current=activeProfileId; },[activeProfileId]);
+  useEffect(()=>{ customCommandsRef.current=customVoiceCommands; },[customVoiceCommands]);
+  useEffect(()=>{ localStorage.setItem("voice_custom_commands",JSON.stringify(customVoiceCommands)); },[customVoiceCommands]);
+
+  const addVoiceCommand = () => {
+    const phrase=newVoiceCmd.phrase.trim();
+    if(!phrase) return;
+    if(newVoiceCmd.kind==="shortcut"&&!newVoiceCmd.targetName.trim()) return;
+    setCustomVoiceCommands(prev=>[...prev,{id:uid(),...newVoiceCmd,phrase}]);
+    setNewVoiceCmd({kind:"alias",phrase:"",action:"task",targetType:"tab",targetName:""});
+    setShowAddVoiceCmd(false);
+  };
+  const deleteVoiceCommand = (id) => setCustomVoiceCommands(prev=>prev.filter(c=>c.id!==id));
 
   // ── Voice recognition — Hebrew commands via Web Speech API ────────────────
   useVoiceCommands({
     showSplash,
     recognitionRef, voiceActiveRef, voiceModeRef,
     openListIdRef, openListTypeRef, profilesRef, tabsRef, activeTabRef, activeSubtabRef, activeProfileIdRef,
+    customCommandsRef,
     setVoiceLabel, setVoiceDebug,
     setProfiles, setOpenListId, setOpenListType, setShowListsMenu, setActiveTab, setActiveSubtab,
   });
@@ -1603,6 +1622,64 @@ export default function App() {
                 ))}
                 <div style={{fontSize:12,color:"#aaa",borderTop:"1px solid #f0f0f8",paddingTop:10}}>
                   לוחצים על סמל המיקרופון כדי להתחיל להאזין, ואז אומרים אחת מהפקודות למעלה.
+                </div>
+
+                {/* Custom voice commands — aliases for existing actions + fixed shortcuts */}
+                <div style={{borderTop:"1px solid #f0f0f8",paddingTop:12,display:"flex",flexDirection:"column",gap:10}}>
+                  <div style={{fontWeight:700,fontSize:13,color:"#1a1a2e"}}>פקודות מותאמות אישית</div>
+                  {customVoiceCommands.length===0&&!showAddVoiceCmd&&(
+                    <div style={{fontSize:12,color:"#aaa"}}>עוד לא הוספת פקודות משלך — אפשר להוסיף כינוי לפעולה קיימת (למשל "תרשמי לי" במקום "משימה") או קיצור דרך קבוע (למשל "לעבודה" שפותח ישר כרטיסייה מסוימת).</div>
+                  )}
+                  {customVoiceCommands.map(c=>(
+                    <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,background:"#f7f7fb",borderRadius:10,padding:"8px 10px"}}>
+                      <div style={{flex:1,fontSize:12}}>
+                        <div style={{fontWeight:600}}>"{c.phrase}"</div>
+                        <div style={{color:"#888"}}>
+                          {c.kind==="alias"
+                            ?`כינוי ל${({task:"הוספת משימה",reminder:"הוספת תזכורת",done:"סימון כבוצע",read:"הקראה",close:"סגירה"})[c.action]||c.action}`
+                            :`קיצור ל${({tab:"כרטיסייה",shopping:"רשימת קניות",notes:"פתק"})[c.targetType]||c.targetType}: ${c.targetName}`}
+                        </div>
+                      </div>
+                      <button className="icon-btn del" aria-label={`מחק פקודה ${c.phrase}`} onClick={()=>deleteVoiceCommand(c.id)}>✕</button>
+                    </div>
+                  ))}
+                  {showAddVoiceCmd?(
+                    <div style={{display:"flex",flexDirection:"column",gap:8,background:"#f7f7fb",borderRadius:10,padding:10}}>
+                      <input className="plain-input" placeholder='הביטוי שתגידי (למשל "תרשמי לי")' value={newVoiceCmd.phrase} onChange={e=>setNewVoiceCmd(v=>({...v,phrase:e.target.value}))}/>
+                      <div style={{display:"flex",gap:12,fontSize:12}}>
+                        <label style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer"}}>
+                          <input type="radio" checked={newVoiceCmd.kind==="alias"} onChange={()=>setNewVoiceCmd(v=>({...v,kind:"alias"}))}/> כינוי לפעולה קיימת
+                        </label>
+                        <label style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer"}}>
+                          <input type="radio" checked={newVoiceCmd.kind==="shortcut"} onChange={()=>setNewVoiceCmd(v=>({...v,kind:"shortcut"}))}/> קיצור דרך קבוע
+                        </label>
+                      </div>
+                      {newVoiceCmd.kind==="alias"?(
+                        <select className="plain-input" value={newVoiceCmd.action} onChange={e=>setNewVoiceCmd(v=>({...v,action:e.target.value}))}>
+                          <option value="task">הוספת משימה</option>
+                          <option value="reminder">הוספת תזכורת</option>
+                          <option value="done">סימון כבוצע</option>
+                          <option value="read">הקראה</option>
+                          <option value="close">סגירה</option>
+                        </select>
+                      ):(
+                        <>
+                          <select className="plain-input" value={newVoiceCmd.targetType} onChange={e=>setNewVoiceCmd(v=>({...v,targetType:e.target.value,targetName:""}))}>
+                            <option value="tab">כרטיסייה</option>
+                            <option value="shopping">רשימת קניות</option>
+                            <option value="notes">פתק</option>
+                          </select>
+                          <input className="plain-input" placeholder="שם היעד (למשל: עבודה)" value={newVoiceCmd.targetName} onChange={e=>setNewVoiceCmd(v=>({...v,targetName:e.target.value}))}/>
+                        </>
+                      )}
+                      <div style={{display:"flex",gap:8}}>
+                        <button className="add-btn" style={{"--accent":"#2d6a4f"}} onClick={addVoiceCommand}>שמור</button>
+                        <button className="icon-btn" onClick={()=>setShowAddVoiceCmd(false)}>ביטול</button>
+                      </div>
+                    </div>
+                  ):(
+                    <button className="ghost-btn" style={{"--accent":"#2d6a4f",alignSelf:"flex-start"}} onClick={()=>setShowAddVoiceCmd(true)}>+ הוסף פקודה</button>
+                  )}
                 </div>
               </div>
               <button onClick={()=>setShowVoiceHelp(false)}
