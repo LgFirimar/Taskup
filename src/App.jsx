@@ -89,6 +89,7 @@ export default function App() {
   const [emailRules,setEmailRules] = useState(()=>{ try{return JSON.parse(localStorage.getItem("email_rules"))||[];}catch{return[];} });
   const [emailSummaries,setEmailSummaries] = useState([]);
   const [emailLoading,setEmailLoading] = useState(false);
+  const [emailStatusMsg,setEmailStatusMsg] = useState("");
   const [showNewRule,setShowNewRule] = useState(false);
   const [newRule,setNewRule] = useState({sender:"",subject:"",format:"bullets"});
   const [gmailClientId,setGmailClientId] = useState(()=>localStorage.getItem("gmail_client_id")||"");
@@ -336,16 +337,22 @@ export default function App() {
   const fetchAndSummarize = async () => {
     if (!gmailToken || emailRules.length === 0) return;
     setEmailLoading(true);
+    setEmailStatusMsg("");
     const summaries = [];
+    let threadsFound = 0;
+    let summarizeFailures = 0;
     for (const rule of emailRules) {
       try {
-        // Build Gmail search query
-        let q = "in:inbox";
+        // Build Gmail search query. Note: no "in:inbox" restriction — Gmail's
+        // default search already excludes Spam/Trash, but still matches mail
+        // that's been archived out of the inbox (a very common case).
+        let q = "";
         if (rule.dateAll) { /* no date filter */ }
-        else if (rule.dateFrom) { q += ` after:${rule.dateFrom.replace(/-/g,"/")}`; }
-        else { q += " newer_than:7d"; }
-        if (rule.sender) q += ` from:${rule.sender}`;
-        if (rule.subject) q += ` subject:${rule.subject}`;
+        else if (rule.dateFrom) { q += `after:${rule.dateFrom.replace(/-/g,"/")} `; }
+        else { q += "newer_than:7d "; }
+        if (rule.sender) q += `from:${rule.sender} `;
+        if (rule.subject) q += `subject:${rule.subject} `;
+        q = q.trim();
 
         const searchRes = await fetch(
           `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=5`,
@@ -355,13 +362,14 @@ export default function App() {
         if (!searchRes.ok) throw new Error(`Gmail search failed: ${searchRes.status}`);
         const searchData = await searchRes.json();
         const threads = searchData.threads || [];
+        threadsFound += threads.length;
 
         for (const thread of threads.slice(0, 3)) {
           const tRes = await fetch(
             `https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=full`,
             { headers: { Authorization: `Bearer ${gmailToken}` } }
           );
-          if (!tRes.ok) { console.error(`Gmail thread fetch failed: ${tRes.status}`); continue; }
+          if (!tRes.ok) { console.error(`Gmail thread fetch failed: ${tRes.status}`); summarizeFailures++; continue; }
           const tData = await tRes.json();
           const msg = tData.messages?.[0];
           if (!msg) continue;
@@ -384,13 +392,22 @@ export default function App() {
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ subject, sender, body: body.slice(0,3000), format: rule.format }),
           });
-          if (!sumRes.ok) { console.error(`summarize-email failed: ${sumRes.status}`); continue; }
+          if (!sumRes.ok) { console.error(`summarize-email failed: ${sumRes.status}`); summarizeFailures++; continue; }
           const sumData = await sumRes.json();
           summaries.push({ id: thread.id, subject, sender, date, summary: sumData.result, format: rule.format, ruleId: rule.id });
         }
-      } catch(e) { console.error(e); }
+      } catch(e) { console.error(e); summarizeFailures++; }
     }
     setEmailSummaries(summaries);
+    if (summaries.length === 0) {
+      if (threadsFound === 0) {
+        setEmailStatusMsg("לא נמצאו מיילים תואמים לחוקים. בדקי שהשולח/הנושא מדויקים, או סמני \"כל המיילים\" בעריכת החוק — כברירת מחדל מחפשים רק 7 ימים אחורה.");
+      } else if (summarizeFailures > 0) {
+        setEmailStatusMsg("נמצאו מיילים תואמים, אבל הסיכום נכשל. נסי שוב בעוד רגע — אם זה ממשיך לקרות ייתכן שיש בעיה בשרת הסיכום.");
+      } else {
+        setEmailStatusMsg("נמצאו מיילים אך לא ניתן היה לקרוא את תוכנם.");
+      }
+    }
     setEmailLoading(false);
   };
 
@@ -1101,14 +1118,14 @@ export default function App() {
               {/* Rules */}
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
                 <span style={{fontWeight:700,fontSize:14}}>חוקי סיכום</span>
-                <button onClick={()=>setShowNewRule(p=>!p)} style={{background:accent,color:"white",border:"none",borderRadius:10,padding:"5px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>+ חוק חדש</button>
+                <button onClick={()=>{setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false});setShowNewRule(true);}} style={{background:accent,color:"white",border:"none",borderRadius:10,padding:"5px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>+ חוק חדש</button>
               </div>
 
               {showNewRule&&(
                 <div style={{background:"white",borderRadius:14,padding:16,marginBottom:12,boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-                    <span style={{fontSize:13,fontWeight:700}}>חוק חדש</span>
-                    <button onClick={()=>{setShowNewRule(false);setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false});}} style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",fontSize:18,lineHeight:1}} aria-label="בטל חוק חדש">✕</button>
+                    <span style={{fontSize:13,fontWeight:700}}>{newRule.id?"עריכת חוק":"חוק חדש"}</span>
+                    <button onClick={()=>{setShowNewRule(false);setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false});}} style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",fontSize:18,lineHeight:1}} aria-label="בטל">✕</button>
                   </div>
                   <div style={{display:"flex",flexDirection:"column",gap:10}}>
                     <input className="plain-input" style={{fontSize:13}} placeholder="שולח (לדוג' momence.com)" value={newRule.sender} onChange={e=>setNewRule(p=>({...p,sender:e.target.value}))}/>
@@ -1121,13 +1138,20 @@ export default function App() {
                       </label>
                       {!newRule.dateAll&&<input type="date" className="plain-input" style={{flex:1,fontSize:12,padding:"4px 8px",colorScheme:"light"}} value={newRule.dateFrom||""} onChange={e=>setNewRule(p=>({...p,dateFrom:e.target.value}))} placeholder="מתאריך"/>}
                     </div>
+                    {!newRule.dateAll&&!newRule.dateFrom&&<div style={{fontSize:11,color:"#aaa",marginTop:-4}}>בלי תאריך ובלי "כל המיילים" — מחפש רק 7 הימים האחרונים.</div>}
                     <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                       {[["bullets","• נקודות"],["summary","📝 סיכום"],["tasks","✅ משימות"],["dates","📅 תאריכים"]].map(([v,l])=>(
                         <button key={v} onClick={()=>setNewRule(p=>({...p,format:v}))} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${newRule.format===v?accent:"#dde"}`,background:newRule.format===v?`${accent}15`:"white",color:newRule.format===v?accent:"#888",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,fontWeight:newRule.format===v?700:400}}>{l}</button>
                       ))}
                     </div>
                     <div style={{display:"flex",gap:8}}>
-                      <button className="add-btn" style={{flex:1}} onClick={()=>{if(!newRule.sender&&!newRule.subject)return; saveEmailRules([...emailRules,{id:uid(),...newRule}]); setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false}); setShowNewRule(false);}}>שמור חוק</button>
+                      <button className="add-btn" style={{flex:1}} onClick={()=>{
+                        if(!newRule.sender&&!newRule.subject)return;
+                        if(newRule.id){ saveEmailRules(emailRules.map(r=>r.id===newRule.id?{...newRule}:r)); }
+                        else{ saveEmailRules([...emailRules,{id:uid(),...newRule}]); }
+                        setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false});
+                        setShowNewRule(false);
+                      }}>{newRule.id?"עדכן חוק":"שמור חוק"}</button>
                     </div>
                   </div>
                 </div>
@@ -1138,8 +1162,13 @@ export default function App() {
                   <div style={{flex:1}}>
                     {rule.sender&&<div style={{fontSize:13,fontWeight:600}}>מ: {rule.sender}</div>}
                     {rule.subject&&<div style={{fontSize:12,color:"#888"}}>נושא: {rule.subject}</div>}
-                    <div style={{fontSize:11,color:accent,marginTop:2}}>{{"bullets":"• נקודות","summary":"סיכום","tasks":"משימות","dates":"תאריכים"}[rule.format]}</div>
+                    <div style={{fontSize:11,color:accent,marginTop:2}}>
+                      {{"bullets":"• נקודות","summary":"סיכום","tasks":"משימות","dates":"תאריכים"}[rule.format]}
+                      {" • "}
+                      {rule.dateAll?"כל המיילים":rule.dateFrom?`מ-${formatDate(rule.dateFrom)}`:"7 ימים אחרונים"}
+                    </div>
                   </div>
+                  <button onClick={()=>{setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false,...rule});setShowNewRule(true);}} style={{background:"none",border:"none",color:"#bbb",cursor:"pointer",fontSize:15}} aria-label="ערוך חוק">✎</button>
                   <button onClick={()=>saveEmailRules(emailRules.filter(r=>r.id!==rule.id))} style={{background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:16}} aria-label="מחק חוק">✕</button>
                 </div>
               ))}
@@ -1153,6 +1182,13 @@ export default function App() {
                 </button>
               )}
 
+              {/* Status message from the last sync attempt */}
+              {emailStatusMsg&&!emailLoading&&(
+                <div style={{background:"#fffbeb",border:"1.5px solid #fcd34d",borderRadius:12,padding:"10px 14px",marginBottom:16,fontSize:13,color:"#92400e",lineHeight:1.6}}>
+                  ℹ️ {emailStatusMsg}
+                </div>
+              )}
+
               {/* Summaries */}
               {emailSummaries.map((s,i)=>(
                 <div key={s.id||i} style={{background:"white",borderRadius:16,padding:"16px 18px",marginBottom:12,boxShadow:"0 1px 8px rgba(0,0,0,0.07)"}}>
@@ -1161,7 +1197,7 @@ export default function App() {
                   <div style={{fontSize:13,color:"#444",lineHeight:1.7,whiteSpace:"pre-line"}}>{s.summary}</div>
                 </div>
               ))}
-              {emailSummaries.length===0&&!emailLoading&&gmailToken&&emailRules.length>0&&(
+              {emailSummaries.length===0&&!emailLoading&&!emailStatusMsg&&gmailToken&&emailRules.length>0&&(
                 <div className="empty-state">לחצי "סכמי מיילים עכשיו" כדי לראות תוצאות</div>
               )}
             </div>
