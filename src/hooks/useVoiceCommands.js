@@ -245,11 +245,12 @@ export function useVoiceCommands({
         flash(`לא נמצא: ${query}`,3000); return true;
       }
 
-      // קריאת רשימת קניות פתוחה
+      // קריאת רשימת קניות פתוחה — רק פריטים שעוד לא נקנו
       if((text.includes("הקרא")||text.includes("מה יש"))&&openListIdRef.current&&openListTypeRef.current==="shopping"){
         const pid=activeProfileIdRef.current;
         const list=(profilesRef.current?.[pid]?.shopping||[]).find(l=>l.id===openListIdRef.current);
-        if(list?.items?.length){ const u=new SpeechSynthesisUtterance(list.items.map(i=>i.text).join(", ")); u.lang="he-IL"; speechSynthesis.speak(u); flash(`קורא ${list.items.length} פריטים`); return true; }
+        const pending=(list?.items||[]).filter(i=>!i.done);
+        if(pending.length){ const u=new SpeechSynthesisUtterance(pending.map(i=>i.text).join(", ")); u.lang="he-IL"; speechSynthesis.speak(u); flash(`קורא ${pending.length} פריטים`); return true; }
       }
 
       // קריאת משימות / תזכורות — "תקריא", "תקריאי", "הקרא"

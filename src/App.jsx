@@ -71,6 +71,7 @@ export default function App() {
   const [showNewListInput,setShowNewListInput] = useState(false);
   const [parsingList,setParsingList] = useState(false);
   const [editingShoppingItem,setEditingShoppingItem] = useState(null);
+  const [showBoughtItems,setShowBoughtItems] = useState(false);
 
   // ── Projects ──────────────────────────────────────────────────────────────
   const [showProjects,setShowProjects] = useState(false);
@@ -243,6 +244,7 @@ export default function App() {
   const addShoppingList = (name)=>{ if(!name.trim())return; updateProfile(p=>({...p,shopping:[...(p.shopping||[]),{id:uid(),name:name.trim(),items:[]}]})); };
   const addShoppingItem = (lid,text)=>{ if(!text.trim())return; updateProfile(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id===lid?{...l,items:[...l.items,{id:uid(),text:text.trim()}]}:l)})); };
   const deleteShoppingItem = (lid,iid)=>updateProfile(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id===lid?{...l,items:l.items.filter(i=>i.id!==iid)}:l)}));
+  const toggleShoppingItem = (lid,iid)=>updateProfile(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id===lid?{...l,items:l.items.map(i=>i.id===iid?{...i,done:!i.done}:i)}:l)}));
   const deleteShoppingList = (lid)=>{
     const list=shoppingLists.find(l=>l.id===lid);
     const n=list?.items?.length||0;
@@ -251,7 +253,9 @@ export default function App() {
   };
   const editShoppingItem = (lid,iid,text)=>{ updateProfile(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id===lid?{...l,items:l.items.map(i=>i.id===iid?{...i,text}:i)}:l)})); setEditingShoppingItem(null); };
   const shareShoppingList = (list)=>{
-    const text=`*רשימת קניות - ${list.name}* 🛒\n`+(list.items||[]).map(i=>`• ${i.text}`).join("\n");
+    // Only what's still needed — items already marked "bought" would just clutter
+    // the message for whoever's picking up the list.
+    const text=`*רשימת קניות - ${list.name}* 🛒\n`+(list.items||[]).filter(i=>!i.done).map(i=>`• ${i.text}`).join("\n");
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`,"_blank");
   };
 
@@ -1106,7 +1110,7 @@ export default function App() {
                 <button key={list.id} onClick={()=>{setOpenListId(list.id);setOpenListType(showListsMenu);setShowListsMenu(null);setShowNewListInput(false);}}
                   style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 10px",borderRadius:8,border:"1px solid #ebebea",background:"white",cursor:"pointer",marginBottom:6,fontFamily:"'Heebo',sans-serif",fontSize:14,color:"#1a1a1a",textAlign:"right"}}>
                   <span style={{flex:1}}>{list.name}</span>
-                  <span style={{fontSize:11,color:"#bbb"}}>{showListsMenu==="shopping"?(list.items?.length||0):"📄"}</span>
+                  <span style={{fontSize:11,color:"#bbb"}}>{showListsMenu==="shopping"?(list.items||[]).filter(i=>!i.done).length:"📄"}</span>
                 </button>
               ))}
               {showNewListInput?(
@@ -1154,9 +1158,9 @@ export default function App() {
             {openListType==="shopping"&&<>
               <div style={{flex:1,overflowY:"auto",padding:"8px 20px 100px"}}>
                 {(!openList.items||openList.items.length===0)&&<div style={{color:"#ccc",fontSize:14,textAlign:"center",padding:"40px 0"}}>רשימה ריקה — הוסיפי פריטים למטה</div>}
-                {(openList.items||[]).map(item=>(
+                {(openList.items||[]).filter(item=>!item.done).map(item=>(
                   <div key={item.id} className="list-item-row">
-                    <span style={{width:7,height:7,borderRadius:"50%",background:accent,flexShrink:0}}/>
+                    <button onClick={()=>toggleShoppingItem(openListId,item.id)} aria-label={`סמני "${item.text}" כנקנה`} style={{width:18,height:18,minWidth:18,borderRadius:"50%",border:`1.5px solid ${accent}`,background:"none",padding:0,cursor:"pointer",flexShrink:0}}/>
                     {editingShoppingItem?.itemId===item.id
                       ?<input autoFocus className="edit-inline" style={{flex:1,fontSize:15}} value={editingShoppingItem.text} onChange={e=>setEditingShoppingItem(p=>({...p,text:e.target.value}))}
                           onKeyDown={e=>{if(e.key==="Enter")editShoppingItem(openListId,item.id,editingShoppingItem.text);if(e.key==="Escape")setEditingShoppingItem(null);}}/>
@@ -1166,6 +1170,22 @@ export default function App() {
                     <button onClick={()=>deleteShoppingItem(openListId,item.id)} style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}} aria-label="מחק פריט">✕</button>
                   </div>
                 ))}
+
+                {(openList.items||[]).some(item=>item.done)&&(()=>{
+                  const bought=(openList.items||[]).filter(item=>item.done);
+                  return <>
+                    <button onClick={()=>setShowBoughtItems(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,color:"#bbb",fontWeight:600,padding:"10px 4px 6px",display:"flex",alignItems:"center",gap:6}}>
+                      נקנה ({bought.length}) <span style={{fontSize:9}}>{showBoughtItems?"▲":"▼"}</span>
+                    </button>
+                    {showBoughtItems&&bought.map(item=>(
+                      <div key={item.id} className="list-item-row">
+                        <button onClick={()=>toggleShoppingItem(openListId,item.id)} aria-label={`בטלי סימון "${item.text}" כנקנה`} style={{width:18,height:18,minWidth:18,borderRadius:"50%",border:`1.5px solid ${accent}`,background:accent,padding:0,cursor:"pointer",flexShrink:0}}/>
+                        <span style={{flex:1,fontSize:15,color:"#bbb",lineHeight:1.5,textDecoration:"line-through"}}>{item.text}</span>
+                        <button onClick={()=>deleteShoppingItem(openListId,item.id)} style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}} aria-label="מחק פריט">✕</button>
+                      </div>
+                    ))}
+                  </>;
+                })()}
               </div>
               {/* Fixed add bar — stays above keyboard on mobile */}
               <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"12px 20px",paddingBottom:"calc(12px + env(safe-area-inset-bottom, 0px))",borderTop:"1px solid #ebebea",background:"white",zIndex:201}}>
