@@ -835,7 +835,7 @@ export default function App() {
     .tab-pill{
       display:flex;align-items:center;gap:5px;
       padding:6px 14px;border-radius:100px;border:none;
-      background:transparent;cursor:pointer;
+      background:transparent;
       font-family:'Heebo',sans-serif;font-size:13px;font-weight:500;
       color:#aaa;white-space:nowrap;transition:all 0.18s;
     }
@@ -1867,13 +1867,15 @@ export default function App() {
 
           <div className="tab-bar">
             {tabs.map(t=>(
-              <button key={t.id} className={`tab-pill${activeTab===t.id?" active":""}`} style={{"--accent":t.color}} onClick={()=>{setActiveTab(t.id);setActiveSubtab(null);}}>
-                <span className="tab-dot" style={{background:t.color}}/>{t.label}
+              <div key={t.id} className={`tab-pill${activeTab===t.id?" active":""}`} style={{"--accent":t.color}}>
+                <button onClick={()=>{setActiveTab(t.id);setActiveSubtab(null);}} style={{display:"flex",alignItems:"center",gap:5,background:"none",border:"none",padding:0,margin:0,font:"inherit",color:"inherit",cursor:"pointer"}}>
+                  <span className="tab-dot" style={{background:t.color}}/>{t.label}
+                </button>
                 {activeTab===t.id&&(<>
-                  <span role="button" tabIndex={0} aria-label="קבע ככרטיסייה ברירת מחדל" onClick={e=>{e.stopPropagation();setDefaultTab(t.id);}} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();e.stopPropagation();setDefaultTab(t.id);}}} style={{fontSize:12,cursor:"pointer",color:profiles[activeProfileId]?.defaultTab===t.id?"#f4a261":"#ddd",marginRight:-2,lineHeight:1}}>★</span>
-                  <span className="icon-btn del" role="button" tabIndex={0} aria-label="מחק כרטיסייה" style={{fontSize:11,marginRight:-2,padding:0,minWidth:"unset",minHeight:"unset"}} onClick={e=>{e.stopPropagation();deleteTab(t.id);}} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();e.stopPropagation();deleteTab(t.id);}}}>✕</span>
+                  <button aria-label="קבע ככרטיסייה ברירת מחדל" onClick={()=>setDefaultTab(t.id)} style={{fontSize:12,cursor:"pointer",color:profiles[activeProfileId]?.defaultTab===t.id?"#f4a261":"#ddd",marginRight:-2,lineHeight:1,background:"none",border:"none",padding:0}}>★</button>
+                  <button className="icon-btn del" aria-label="מחק כרטיסייה" style={{fontSize:11,marginRight:-2,padding:0,minWidth:"unset",minHeight:"unset",background:"none",border:"none",cursor:"pointer"}} onClick={()=>deleteTab(t.id)}>✕</button>
                 </>)}
-              </button>
+              </div>
             ))}
             {showNewTab?(
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
