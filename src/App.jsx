@@ -1,5 +1,11 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import SplashScreen from "./SplashScreen";
+import ProfileModal from "./components/ProfileModal";
+import ReminderAlertModal from "./components/ReminderAlertModal";
+import BigCelebrate from "./components/BigCelebrate";
+import QuickCapture from "./components/QuickCapture";
+import ListsMenu from "./components/ListsMenu";
+import ListDetailOverlay from "./components/ListDetailOverlay";
 import { APP_CSS } from "./appStyles";
 import { useVoiceCommands } from "./hooks/useVoiceCommands";
 import {
@@ -825,21 +831,10 @@ export default function App() {
   // ── Profile modal ──────────────────────────────────────────────────────────
   if (showProfileModal) {
     return (
-      <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(135deg,#e8f5f0 0%,#eee8f8 100%)",fontFamily:"'Heebo',sans-serif",display:"flex",alignItems:"center",justifyContent:"center"}}>
-        <style>{`@import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap');*{box-sizing:border-box;}`}</style>
-        <div style={{background:"white",borderRadius:24,padding:36,width:360,boxShadow:"0 12px 48px rgba(100,100,160,0.16)"}}>
-          <div style={{textAlign:"center",marginBottom:16}}>
-            <img src="/icon.png" alt="" style={{width:72,borderRadius:18,boxShadow:"0 4px 16px rgba(100,100,160,0.2)"}}/>
-          </div>
-          <div style={{fontSize:22,fontWeight:700,textAlign:"center",marginBottom:4,color:"#1a1a2e"}}>TaskUp</div>
-          <div style={{fontSize:14,color:"#9090b0",textAlign:"center",marginBottom:28}}>{allProfiles.length>0?"בחרי פרופיל או צרי חדש":"ברוכה הבאה 👋"}</div>
-          {allProfiles.length>0&&<div style={{marginBottom:20}}>{allProfiles.map(p=>(<button key={p.id} onClick={()=>{setActiveProfileId(p.id);setActiveTab(null);setActiveSubtab(null);setShowProfileModal(false);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 14px",borderRadius:14,border:"1.5px solid #ededf5",background:"white",cursor:"pointer",marginBottom:8,fontFamily:"'Heebo',sans-serif",fontSize:15,fontWeight:500,color:"#1a1a2e",transition:"all 0.15s"}}><span style={{width:34,height:34,borderRadius:"50%",background:"#7bc4a4",color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700}}>{p.name.charAt(0)}</span>{p.name}</button>))}<div style={{borderTop:"1px solid #f0f0f8",margin:"16px 0 14px"}}/></div>}
-          <div style={{fontSize:12,fontWeight:700,color:"#b0b0cc",marginBottom:8,textTransform:"uppercase",letterSpacing:"0.08em"}}>{allProfiles.length>0?"פרופיל חדש":"שם הפרופיל"}</div>
-          <input autoFocus className="plain-input" style={{width:"100%",marginBottom:14,fontSize:15,"--accent":"#7bc4a4"}} placeholder="שם הפרופיל" value={newProfileName} onChange={e=>setNewProfileName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&createProfile()}/>
-          <button onClick={createProfile} style={{width:"100%",background:"#7bc4a4",color:"white",border:"none",borderRadius:14,padding:"13px 0",fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:allProfiles.length>0?8:0,boxShadow:"0 4px 14px rgba(123,196,164,0.4)"}}>{allProfiles.length>0?"צרי פרופיל":"התחלי"}</button>
-          {allProfiles.length>0&&<button onClick={()=>setShowProfileModal(false)} style={{width:"100%",background:"none",color:"#b0b0cc",border:"none",padding:"8px 0",fontSize:14,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>ביטול</button>}
-        </div>
-      </div>
+      <ProfileModal
+        allProfiles={allProfiles} newProfileName={newProfileName} setNewProfileName={setNewProfileName} createProfile={createProfile}
+        setActiveProfileId={setActiveProfileId} setActiveTab={setActiveTab} setActiveSubtab={setActiveSubtab} setShowProfileModal={setShowProfileModal}
+      />
     );
   }
 
@@ -850,153 +845,38 @@ export default function App() {
 
         {/* ── Reminder alert modal ── */}
         {showAlertModal&&alertReminders.length>0&&(
-          <div className="alert-modal">
-            <div className="alert-card">
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <span style={{fontSize:22}}>🔔</span>
-                <span style={{fontWeight:700,fontSize:17}}>תזכורות שממתינות לך</span>
-              </div>
-              <div style={{overflowY:"auto",flex:1,display:"flex",flexDirection:"column",gap:8}}>
-                {alertReminders.map((r,i)=>(
-                  <div key={i} className="alert-item">
-                    <span style={{fontSize:16,flexShrink:0}}>⚠️</span>
-                    <div style={{flex:1}}>
-                      <div style={{fontWeight:600,fontSize:14}}>{r.text}</div>
-                      {r.startDate&&<div style={{fontSize:12,color:"#92400e",marginTop:2}}>מ-{formatDate(r.startDate)}{r.endDate?` עד ${formatDate(r.endDate)}`:""}</div>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <button onClick={()=>setShowAlertModal(false)}
-                style={{background:"#1a1a1a",color:"white",border:"none",borderRadius:10,padding:"11px 0",fontSize:15,fontWeight:600,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>
-                סגור
-              </button>
-            </div>
-          </div>
+          <ReminderAlertModal alertReminders={alertReminders} setShowAlertModal={setShowAlertModal}/>
         )}
 
         {/* Big celebrate */}
-        {bigCelebrateId&&(
-          <div style={{position:"fixed",inset:0,pointerEvents:"none",zIndex:260,overflow:"hidden"}}>
-            {["🎉","✨","⭐","🎊","💫","🌟","🎈"].map((emoji,i)=>(
-              <span key={i} className="big-emoji" style={{"--dx":`${(i-3)*35}px`,"--dy":`-${60+Math.round(i*8)}px`,left:"50%",bottom:"40%",animationDelay:`${i*70}ms`}}>{emoji}</span>
-            ))}
-          </div>
-        )}
+        {bigCelebrateId&&<BigCelebrate/>}
 
         {/* Quick capture */}
         {showQuickCapture&&(
-          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:200,direction:"rtl"}} onClick={e=>{if(e.target===e.currentTarget)setShowQuickCapture(false);}}>
-            <div style={{background:"white",borderRadius:"16px 16px 0 0",padding:"24px 20px 32px",width:"100%",maxWidth:600}}>
-              <div style={{fontSize:12,fontWeight:700,color:"#bbb",marginBottom:10}}>📥 לכידה מהירה {currentTab?`← ${currentTab.label}`:"← בחרי קודם כרטיסייה"}</div>
-              <div style={{display:"flex",gap:10}}>
-                <input autoFocus className="plain-input" style={{flex:1,fontSize:16}} placeholder="מה עלה לך בראש?" value={quickText} onChange={e=>setQuickText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&ctx)quickCapture();if(e.key==="Escape")setShowQuickCapture(false);}}/>
-                <button className="add-btn" style={{fontSize:15}} onClick={quickCapture} disabled={!ctx}>הוסיפי</button>
-              </div>
-              {!ctx&&<div style={{fontSize:12,color:"#e07070",marginTop:8}}>בחרי כרטיסייה כדי להוסיף משימה</div>}
-            </div>
-          </div>
+          <QuickCapture setShowQuickCapture={setShowQuickCapture} currentTab={currentTab} quickText={quickText} setQuickText={setQuickText} quickCapture={quickCapture} ctx={ctx}/>
         )}
 
         {/* Lists menu */}
         {showListsMenu&&(
-          <div style={{position:"fixed",inset:0,zIndex:190}} onClick={()=>{setShowListsMenu(null);setShowNewListInput(false);setNewListName("");}}>
-            <div style={{position:"absolute",bottom:96,left:24,background:"white",borderRadius:14,padding:16,minWidth:220,boxShadow:"0 4px 24px rgba(0,0,0,0.18)"}} onClick={e=>e.stopPropagation()}>
-              <div style={{fontWeight:700,fontSize:15,marginBottom:14}}>{showListsMenu==="shopping"?"🛒 רשימות קניות":"📝 פתקים"}</div>
-              {(showListsMenu==="shopping"?shoppingLists:notesList).map(list=>(
-                <button key={list.id} onClick={()=>{setOpenListId(list.id);setOpenListType(showListsMenu);setShowListsMenu(null);setShowNewListInput(false);}}
-                  style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 10px",borderRadius:8,border:"1px solid #ebebea",background:"white",cursor:"pointer",marginBottom:6,fontFamily:"'Heebo',sans-serif",fontSize:14,color:"#1a1a1a",textAlign:"right"}}>
-                  <span style={{flex:1}}>{list.name}</span>
-                  <span style={{fontSize:11,color:"#bbb"}}>{showListsMenu==="shopping"?(list.items||[]).filter(i=>!i.done).length:"📄"}</span>
-                </button>
-              ))}
-              {showNewListInput?(
-                <div style={{display:"flex",gap:6,marginTop:8}}>
-                  <input autoFocus className="plain-input" style={{flex:1,fontSize:13,padding:"6px 10px"}} placeholder={showListsMenu==="shopping"?"שם הרשימה":"שם הפתק"} value={newListName} onChange={e=>setNewListName(e.target.value)}
-                    onKeyDown={e=>{if(e.key==="Enter"){if(showListsMenu==="shopping")addShoppingList(newListName);else addNote(newListName);setNewListName("");setShowNewListInput(false);}if(e.key==="Escape"){setShowNewListInput(false);setNewListName("");}}}/>
-                  <button className="add-btn" style={{padding:"6px 10px",fontSize:13}} aria-label={showListsMenu==="shopping"?"צור רשימה":"צור פתק"} onClick={()=>{if(showListsMenu==="shopping")addShoppingList(newListName);else addNote(newListName);setNewListName("");setShowNewListInput(false);}}>+</button>
-                </div>
-              ):(
-                <button className="ghost-btn" style={{width:"100%",marginTop:4,fontSize:13}} onClick={()=>setShowNewListInput(true)}>+ {showListsMenu==="shopping"?"רשימה חדשה":"פתק חדש"}</button>
-              )}
-            </div>
-          </div>
+          <ListsMenu
+            showListsMenu={showListsMenu} setShowListsMenu={setShowListsMenu}
+            shoppingLists={shoppingLists} notesList={notesList}
+            setOpenListId={setOpenListId} setOpenListType={setOpenListType}
+            showNewListInput={showNewListInput} setShowNewListInput={setShowNewListInput}
+            newListName={newListName} setNewListName={setNewListName}
+            addShoppingList={addShoppingList} addNote={addNote}
+          />
         )}
 
         {/* List detail overlay */}
         {openListId&&openList&&(
-          <div style={{position:"fixed",inset:0,background:"white",zIndex:200,direction:"rtl",display:"flex",flexDirection:"column"}}>
-            <div style={{padding:"14px 20px",borderBottom:"1px solid #ebebea",display:"flex",alignItems:"center",gap:12,background:"white"}}>
-              <button className="back-btn" onClick={()=>{setOpenListId(null);setOpenListType(null);setListItemInput("");}}>
-                <svg width="28" height="22" viewBox="0 0 28 22" fill="none">
-                  <path d="M5 11 Q9 11 11 11" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  <path d="M11 11 H23" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  <path d="M16 5 L23 11 L16 17" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-                  <circle cx="5" cy="11" r="3" fill="currentColor" opacity="0.45"/>
-                </svg>
-                <span style={{fontSize:11,fontWeight:600}}>חזרה</span>
-              </button>
-              <span style={{fontWeight:700,fontSize:18,flex:1}}>{openList.name}</span>
-              {openListType==="shopping"&&(
-                <button onClick={()=>shareShoppingList(openList)} style={{background:"none",border:"none",fontSize:13,color:"#25d366",cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginLeft:8}}>💬 שתף</button>
-              )}
-              <button onClick={()=>{if(openListType==="shopping")deleteShoppingList(openListId);else deleteNote(openListId);}} style={{background:"none",border:"none",fontSize:13,color:"#e07070",cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>מחק</button>
-            </div>
-
-            {/* Notes: free textarea */}
-            {openListType==="notes"&&(
-              <textarea style={{flex:1,padding:"20px",fontFamily:"'Heebo',sans-serif",fontSize:16,lineHeight:1.8,border:"none",outline:"none",resize:"none",direction:"rtl",color:"#1a1a1a",background:"white"}}
-                placeholder="כתבי כאן בחופשיות..."
-                value={openList.content||""}
-                onChange={e=>updateProfile(p=>({...p,notes:(p.notes||[]).map(n=>n.id===openListId?{...n,content:e.target.value}:n)}))}/>
-            )}
-
-            {/* Shopping: items list */}
-            {openListType==="shopping"&&<>
-              <div style={{flex:1,overflowY:"auto",padding:"8px 20px 100px"}}>
-                {(!openList.items||openList.items.length===0)&&<div style={{color:"#ccc",fontSize:14,textAlign:"center",padding:"40px 0"}}>רשימה ריקה — הוסיפי פריטים למטה</div>}
-                {(openList.items||[]).filter(item=>!item.done).map(item=>(
-                  <div key={item.id} className="list-item-row">
-                    <button onClick={()=>toggleShoppingItem(openListId,item.id)} aria-label={`סמני "${item.text}" כנקנה`} style={{width:18,height:18,minWidth:18,borderRadius:"50%",border:`1.5px solid ${accent}`,background:"none",padding:0,cursor:"pointer",flexShrink:0}}/>
-                    {editingShoppingItem?.itemId===item.id
-                      ?<input autoFocus className="edit-inline" style={{flex:1,fontSize:15}} value={editingShoppingItem.text} onChange={e=>setEditingShoppingItem(p=>({...p,text:e.target.value}))}
-                          onKeyDown={e=>{if(e.key==="Enter")editShoppingItem(openListId,item.id,editingShoppingItem.text);if(e.key==="Escape")setEditingShoppingItem(null);}}/>
-                      :<span style={{flex:1,fontSize:15,color:"#1a1a1a",lineHeight:1.5}}>{item.text}</span>
-                    }
-                    <button onClick={()=>setEditingShoppingItem({listId:openListId,itemId:item.id,text:item.text})} style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}} aria-label="ערוך פריט">✎</button>
-                    <button onClick={()=>deleteShoppingItem(openListId,item.id)} style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}} aria-label="מחק פריט">✕</button>
-                  </div>
-                ))}
-
-                {(openList.items||[]).some(item=>item.done)&&(()=>{
-                  const bought=(openList.items||[]).filter(item=>item.done);
-                  return <>
-                    <button onClick={()=>setShowBoughtItems(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,color:"#bbb",fontWeight:600,padding:"10px 4px 6px",display:"flex",alignItems:"center",gap:6}}>
-                      נקנה ({bought.length}) <span style={{fontSize:9}}>{showBoughtItems?"▲":"▼"}</span>
-                    </button>
-                    {showBoughtItems&&bought.map(item=>(
-                      <div key={item.id} className="list-item-row">
-                        <button onClick={()=>toggleShoppingItem(openListId,item.id)} aria-label={`בטלי סימון "${item.text}" כנקנה`} style={{width:18,height:18,minWidth:18,borderRadius:"50%",border:`1.5px solid ${accent}`,background:accent,padding:0,cursor:"pointer",flexShrink:0}}/>
-                        <span style={{flex:1,fontSize:15,color:"#bbb",lineHeight:1.5,textDecoration:"line-through"}}>{item.text}</span>
-                        <button onClick={()=>deleteShoppingItem(openListId,item.id)} style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}} aria-label="מחק פריט">✕</button>
-                      </div>
-                    ))}
-                  </>;
-                })()}
-              </div>
-              {/* Fixed add bar — stays above keyboard on mobile */}
-              <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"12px 20px",paddingBottom:"calc(12px + env(safe-area-inset-bottom, 0px))",borderTop:"1px solid #ebebea",background:"white",zIndex:201}}>
-                <div style={{fontSize:11,color:"#bbb",marginBottom:6,fontWeight:600}}>פסיקים בין פריטים, או משפט חופשי</div>
-                <div style={{display:"flex",gap:10}}>
-                  <input autoFocus className="plain-input" style={{flex:1,fontSize:15}} placeholder='חלב, ביצים, לחם  או  "תקני גם יוגורט"' value={listItemInput} onChange={e=>setListItemInput(e.target.value)}
-                    onKeyDown={e=>{if(e.key==="Enter"){parseAndAddItems(openListId,listItemInput);setListItemInput("");}}}/>
-                  <button className="add-btn" style={{minWidth:52}} aria-label="הוסף פריטים" onClick={()=>{parseAndAddItems(openListId,listItemInput);setListItemInput("");}} disabled={parsingList}>
-                    {parsingList?<div className="spinner" style={{borderTopColor:"white",borderColor:"rgba(255,255,255,0.3)"}}/>:"+"}
-                  </button>
-                </div>
-              </div>
-            </>}
-          </div>
+          <ListDetailOverlay
+            openListId={openListId} openList={openList} openListType={openListType} accent={accent}
+            setOpenListId={setOpenListId} setOpenListType={setOpenListType} setListItemInput={setListItemInput} listItemInput={listItemInput}
+            shareShoppingList={shareShoppingList} deleteShoppingList={deleteShoppingList} deleteNote={deleteNote} updateProfile={updateProfile}
+            toggleShoppingItem={toggleShoppingItem} editingShoppingItem={editingShoppingItem} setEditingShoppingItem={setEditingShoppingItem} editShoppingItem={editShoppingItem} deleteShoppingItem={deleteShoppingItem}
+            showBoughtItems={showBoughtItems} setShowBoughtItems={setShowBoughtItems} parseAndAddItems={parseAndAddItems} parsingList={parsingList}
+          />
         )}
 
         {/* Email overlay */}
