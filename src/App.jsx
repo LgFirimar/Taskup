@@ -13,6 +13,7 @@ import SidePills from "./components/SidePills";
 import VoiceIndicator from "./components/VoiceIndicator";
 import AppHeader from "./components/AppHeader";
 import TabContent from "./components/TabContent";
+import UndoToast from "./components/UndoToast";
 import { APP_CSS } from "./appStyles";
 import { useVoiceCommands } from "./hooks/useVoiceCommands";
 import {
@@ -68,6 +69,8 @@ export default function App() {
 
   // ── Features ──────────────────────────────────────────────────────────────
   const [completingId,setCompletingId] = useState(null);
+  const [lastDeleted,setLastDeleted] = useState(null); // {type,item,tabId,subtabId} — for the undo toast
+  const undoTimeoutRef = useRef(null);
   const [showDoneTasks,setShowDoneTasks] = useState(false);
   const [showDoneReminders,setShowDoneReminders] = useState(false);
   const [bigCelebrateId,setBigCelebrateId] = useState(null);
@@ -630,7 +633,43 @@ export default function App() {
   };
 
   const toggleDone = (type,id)=>smartUpdateItem(type,id,i=>({...i,done:!i.done}));
-  const deleteItem = (type,id)=>smartDeleteItem(type,id);
+
+  // Find which array (the tab itself, or a specific subtab) currently holds
+  // an item, so a delete can be reversed later without needing to search again.
+  const findItemLocation = (type,id) => {
+    const key=type==="task"?"tasks":"reminders";
+    const t = tabs.find(x=>x.id===activeTab);
+    if(!t) return null;
+    const direct = t[key].find(i=>i.id===id);
+    if(direct) return {item:direct, subtabId:null};
+    for(const s of t.subtabs||[]){
+      const found = (s[key]||[]).find(i=>i.id===id);
+      if(found) return {item:found, subtabId:s.id};
+    }
+    return null;
+  };
+
+  const deleteItem = (type,id)=>{
+    const loc = findItemLocation(type,id);
+    smartDeleteItem(type,id);
+    if(!loc) return; // shouldn't happen, but don't show an undo toast for nothing
+    if(undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
+    setLastDeleted({type, item:loc.item, tabId:activeTab, subtabId:loc.subtabId});
+    undoTimeoutRef.current = setTimeout(()=>{ setLastDeleted(null); undoTimeoutRef.current=null; }, 5000);
+  };
+
+  const undoDeleteItem = () => {
+    if(!lastDeleted) return;
+    const {type,item,tabId,subtabId} = lastDeleted;
+    const key = type==="task"?"tasks":"reminders";
+    setTabs(prev=>prev.map(t=>{
+      if(t.id!==tabId) return t;
+      if(subtabId) return {...t, subtabs:t.subtabs.map(s=>s.id===subtabId?{...s,[key]:[...(s[key]||[]),item]}:s)};
+      return {...t,[key]:[...t[key],item]};
+    }));
+    if(undoTimeoutRef.current){ clearTimeout(undoTimeoutRef.current); undoTimeoutRef.current=null; }
+    setLastDeleted(null);
+  };
   const saveEdit = (type,id)=>{
     smartUpdateItem(type,id,i=>({...i,text:editText,...(type==="reminder"?{alertDate:editAlertDate||null,startDate:editStartDate||null,endDate:editEndDate||null}:{})}));
     setEditId(null); setEditText(""); setEditAlertDate(""); setEditStartDate(""); setEditEndDate("");
@@ -761,6 +800,9 @@ export default function App() {
 
         {/* Big celebrate */}
         {bigCelebrateId&&<BigCelebrate/>}
+
+        {/* Undo delete toast */}
+        <UndoToast lastDeleted={lastDeleted} undoDeleteItem={undoDeleteItem}/>
 
         {/* Quick capture */}
         {showQuickCapture&&(
