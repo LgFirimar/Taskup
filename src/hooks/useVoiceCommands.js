@@ -287,10 +287,14 @@ export function useVoiceCommands({
     };
 
     r.onresult=(e)=>{
+      // Recognition keeps running in the background (see onend below) even while
+      // paused/idle, so bail out before touching any state — otherwise every
+      // interim speech result re-renders the whole app for no reason even when
+      // voice mode isn't actually "listening".
+      if(voiceModeRef.current!=="listening") return;
       const result=e.results[e.results.length-1];
       const text=result[0].transcript.trim().toLowerCase();
       setVoiceDebug(text);
-      if(voiceModeRef.current!=="listening") return;
       if(!text) return;
       let executed=false;
       try{ executed=executeCommand(text,result.isFinal)===true; }

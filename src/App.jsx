@@ -47,6 +47,9 @@ export default function App() {
   const [editText,setEditText] = useState("");
   const [editAlertDate,setEditAlertDate] = useState("");
 
+  // ── Search ─────────────────────────────────────────────────────────────────
+  const [searchQuery,setSearchQuery] = useState("");
+
   // ── Features ──────────────────────────────────────────────────────────────
   const [completingId,setCompletingId] = useState(null);
   const [showDoneTasks,setShowDoneTasks] = useState(false);
@@ -179,6 +182,29 @@ export default function App() {
   // ── Derived tabs ──────────────────────────────────────────────────────────
   const tabs = useMemo(()=>profiles[activeProfileId]?.tabs||[], [profiles, activeProfileId]);
   useEffect(()=>{ tabsRef.current=tabs; },[tabs]);
+
+  // Search across every task/reminder in the active profile — not just the open tab —
+  // so results are useful even when you don't remember which tab something is in.
+  const searchResults = useMemo(()=>{
+    const q=searchQuery.trim().toLowerCase();
+    if(q.length<2) return [];
+    const results=[];
+    const scan=(items,itype,tab,subtab)=>{
+      items.forEach(item=>{
+        if(item.text.toLowerCase().includes(q)) results.push({itype,item,tab,subtab});
+      });
+    };
+    tabs.forEach(tab=>{
+      scan(tab.tasks||[],"task",tab,null);
+      scan(tab.reminders||[],"reminder",tab,null);
+      (tab.subtabs||[]).forEach(sub=>{
+        scan(sub.tasks||[],"task",tab,sub);
+        scan(sub.reminders||[],"reminder",tab,sub);
+      });
+    });
+    return results.slice(0,30);
+  },[searchQuery,tabs]);
+  const goToSearchResult = (r) => { setActiveTab(r.tab.id); setActiveSubtab(r.subtab?r.subtab.id:null); setSearchQuery(""); };
   const setTabs = (updater) => setProfiles(prev=>{
     const cur=prev[activeProfileId]||{tabs:[]};
     const newTabs=typeof updater==="function"?updater(cur.tabs):updater;
@@ -217,7 +243,12 @@ export default function App() {
   const addShoppingList = (name)=>{ if(!name.trim())return; updateProfile(p=>({...p,shopping:[...(p.shopping||[]),{id:uid(),name:name.trim(),items:[]}]})); };
   const addShoppingItem = (lid,text)=>{ if(!text.trim())return; updateProfile(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id===lid?{...l,items:[...l.items,{id:uid(),text:text.trim()}]}:l)})); };
   const deleteShoppingItem = (lid,iid)=>updateProfile(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id===lid?{...l,items:l.items.filter(i=>i.id!==iid)}:l)}));
-  const deleteShoppingList = (lid)=>{ updateProfile(p=>({...p,shopping:(p.shopping||[]).filter(l=>l.id!==lid)})); if(openListId===lid){setOpenListId(null);setOpenListType(null);} };
+  const deleteShoppingList = (lid)=>{
+    const list=shoppingLists.find(l=>l.id===lid);
+    const n=list?.items?.length||0;
+    if(!window.confirm(n>0?`למחוק את רשימת "${list?.name}"? יימחקו לצמיתות ${n} פריטים.`:`למחוק את רשימת "${list?.name}"?`))return;
+    updateProfile(p=>({...p,shopping:(p.shopping||[]).filter(l=>l.id!==lid)})); if(openListId===lid){setOpenListId(null);setOpenListType(null);}
+  };
   const editShoppingItem = (lid,iid,text)=>{ updateProfile(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id===lid?{...l,items:l.items.map(i=>i.id===iid?{...i,text}:i)}:l)})); setEditingShoppingItem(null); };
   const shareShoppingList = (list)=>{
     const text=`*רשימת קניות - ${list.name}* 🛒\n`+(list.items||[]).map(i=>`• ${i.text}`).join("\n");
@@ -245,14 +276,23 @@ export default function App() {
   // ── Notes ─────────────────────────────────────────────────────────────────
   const notesList = getProfile().notes||[];
   const addNote = (name)=>{ if(!name.trim())return; updateProfile(p=>({...p,notes:[...(p.notes||[]),{id:uid(),name:name.trim(),content:""}]})); };
-  const deleteNote = (nid)=>{ updateProfile(p=>({...p,notes:(p.notes||[]).filter(n=>n.id!==nid)})); if(openListId===nid){setOpenListId(null);setOpenListType(null);} };
+  const deleteNote = (nid)=>{
+    const note=notesList.find(n=>n.id===nid);
+    if(!window.confirm(`למחוק את הפתק "${note?.name}"? התוכן שלו יימחק לצמיתות.`))return;
+    updateProfile(p=>({...p,notes:(p.notes||[]).filter(n=>n.id!==nid)})); if(openListId===nid){setOpenListId(null);setOpenListType(null);}
+  };
 
   // ── Projects ──────────────────────────────────────────────────────────────
   const projects = getProfile().projects||[];
   const openProject = projects.find(p=>p.id===openProjectId)||null;
 
   const addProject = (name)=>{ if(!name.trim())return; const id=uid(); updateProfile(p=>({...p,projects:[...(p.projects||[]),{id,name:name.trim(),tasks:[],timeline:[],bubbles:[],board:[]}]})); setOpenProjectId(id); setShowProjects(false); setProjectView("overview"); };
-  const deleteProject = (pid)=>{ updateProfile(p=>({...p,projects:(p.projects||[]).filter(pj=>pj.id!==pid)})); if(openProjectId===pid){setOpenProjectId(null);} };
+  const deleteProject = (pid)=>{
+    const proj=projects.find(p=>p.id===pid);
+    const n=proj?.tasks?.length||0;
+    if(!window.confirm(n>0?`למחוק את הפרויקט "${proj?.name}"? יימחקו לצמיתות ${n} משימות וכל התוכן שלו (ציר זמן, רעיונות, לוח).`:`למחוק את הפרויקט "${proj?.name}"?`))return;
+    updateProfile(p=>({...p,projects:(p.projects||[]).filter(pj=>pj.id!==pid)})); if(openProjectId===pid){setOpenProjectId(null);}
+  };
 
   const updateProject = (pid,fn)=>updateProfile(p=>({...p,projects:(p.projects||[]).map(pj=>pj.id===pid?fn(pj):pj)}));
 
@@ -538,6 +578,9 @@ export default function App() {
     setNewTabInput(""); setShowNewTab(false); setActiveTab(id); setActiveSubtab(null);
   };
   const deleteTab = (id)=>{
+    const tab=tabs.find(t=>t.id===id);
+    const n=(tab?.tasks?.length||0)+(tab?.reminders?.length||0)+(tab?.subtabs?.length||0);
+    if(!window.confirm(n>0?`למחוק את הכרטיסייה "${tab?.label}"? יימחקו לצמיתות ${tab?.tasks?.length||0} משימות, ${tab?.reminders?.length||0} תזכורות ו-${tab?.subtabs?.length||0} תת-כרטיסיות.`:`למחוק את הכרטיסייה "${tab?.label}"?`))return;
     setTabs(p=>p.filter(t=>t.id!==id));
     if(activeTab===id){
       const remaining=tabs.filter(t=>t.id!==id);
@@ -551,7 +594,12 @@ export default function App() {
     setTabs(prev=>prev.map(t=>t.id===activeTab?{...t,subtabs:[...t.subtabs,{id,label:name,tasks:[],reminders:[]}]}:t));
     setNewSubInput(""); setShowNewSub(false); setActiveSubtab(id);
   };
-  const deleteSubtab = (id)=>{ setTabs(prev=>prev.map(t=>t.id===activeTab?{...t,subtabs:t.subtabs.filter(s=>s.id!==id)}:t)); if(activeSubtab===id)setActiveSubtab(null); };
+  const deleteSubtab = (id)=>{
+    const sub=tabs.find(t=>t.id===activeTab)?.subtabs.find(s=>s.id===id);
+    const n=(sub?.tasks?.length||0)+(sub?.reminders?.length||0);
+    if(!window.confirm(n>0?`למחוק את "${sub?.label}"? יימחקו לצמיתות ${sub?.tasks?.length||0} משימות ו-${sub?.reminders?.length||0} תזכורות.`:`למחוק את "${sub?.label}"?`))return;
+    setTabs(prev=>prev.map(t=>t.id===activeTab?{...t,subtabs:t.subtabs.filter(s=>s.id!==id)}:t)); if(activeSubtab===id)setActiveSubtab(null);
+  };
 
   // ── Tasks & reminders ─────────────────────────────────────────────────────
   const addTask = ()=>{ const text=taskInput.trim(); if(!text)return; updateCtx(c=>({...c,tasks:[...c.tasks,{id:uid(),text,done:false,createdAt:today(),subtasks:[],priority:null}]})); setTaskInput(""); };
@@ -1771,7 +1819,31 @@ export default function App() {
             </div>
             </div>
           </div>
-          <input className="search-bar" placeholder="חיפוש משימות..." readOnly style={{cursor:"text"}}/>
+          <div style={{position:"relative"}}>
+            <input
+              className="search-bar"
+              placeholder="חיפוש משימות ותזכורות..."
+              value={searchQuery}
+              onChange={e=>setSearchQuery(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Escape")setSearchQuery("");}}
+              style={searchQuery?{paddingLeft:36}:undefined}
+            />
+            {searchQuery&&(
+              <button onClick={()=>setSearchQuery("")} aria-label="נקה חיפוש" style={{position:"absolute",left:14,top:9,background:"none",border:"none",color:"#bbb",fontSize:15,cursor:"pointer",lineHeight:1,padding:2}}>✕</button>
+            )}
+            {searchQuery.trim().length>=2&&(
+              <div style={{position:"absolute",top:"calc(100% - 8px)",right:0,left:0,background:"white",borderRadius:14,boxShadow:"0 6px 24px rgba(0,0,0,0.12)",zIndex:50,maxHeight:320,overflowY:"auto",padding:searchResults.length?"6px 0":"14px"}}>
+                {searchResults.length===0&&<div style={{color:"#bbb",fontSize:13,textAlign:"center"}}>אין תוצאות ל"{searchQuery}"</div>}
+                {searchResults.map((r,i)=>(
+                  <button key={r.itype+r.item.id+i} onClick={()=>goToSearchResult(r)} style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"right",background:"none",border:"none",padding:"9px 16px",cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>
+                    <span style={{fontSize:14}}>{r.itype==="task"?"✓":"🔔"}</span>
+                    <span style={{flex:1,fontSize:14,color:"#1a1a2e",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.item.text}</span>
+                    <span style={{fontSize:11,color:"#bbb",flexShrink:0}}>{r.tab.label}{r.subtab?` / ${r.subtab.label}`:""}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           <div className="tab-bar">
             {tabs.map(t=>(
