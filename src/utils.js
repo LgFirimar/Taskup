@@ -4,6 +4,12 @@
 export const uid = () => Math.random().toString(36).slice(2, 9);
 export const STORAGE_KEY = "taskup_v1";
 export const WORKER_URL = "https://taskup-ai.lior0gal.workers.dev";
+// A single Google OAuth Client ID for the whole app, baked in at build time via
+// the VITE_GMAIL_CLIENT_ID env var on the hosting platform. This lets any user
+// just click "התחבר ל-Gmail" with zero Google Cloud Console setup of their own —
+// only the app owner sets this up once. If it's not set (e.g. local dev without
+// the env var), the app falls back to the old manual Client-ID-entry flow.
+export const DEFAULT_GMAIL_CLIENT_ID = import.meta.env.VITE_GMAIL_CLIENT_ID || "";
 export const PRIO_CYCLE = [null, "green", "yellow", "red"];
 export const PRIO_COLOR = { green:"#4caf50", yellow:"#ffa726", red:"#ef5350" };
 

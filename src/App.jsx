@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import SplashScreen from "./SplashScreen";
 import { useVoiceCommands } from "./hooks/useVoiceCommands";
 import {
-  uid, STORAGE_KEY, WORKER_URL, PRIO_CYCLE, PRIO_COLOR, TAB_COLORS,
+  uid, STORAGE_KEY, WORKER_URL, PRIO_CYCLE, PRIO_COLOR, TAB_COLORS, DEFAULT_GMAIL_CLIENT_ID,
   formatDate, today, getReminderStatus, getDaysUntil, loadStorage, computeInitialAlerts,
 } from "./utils";
 
@@ -94,7 +94,11 @@ export default function App() {
   const [emailStatusMsg,setEmailStatusMsg] = useState("");
   const [showNewRule,setShowNewRule] = useState(false);
   const [newRule,setNewRule] = useState({sender:"",subject:"",format:"bullets"});
-  const [gmailClientId,setGmailClientId] = useState(()=>localStorage.getItem("gmail_client_id")||"");
+  // A manual override (saved per-browser) always wins; otherwise fall back to
+  // the app-wide Client ID baked in at build time, if one was configured.
+  const [gmailClientIdOverride,setGmailClientIdOverride] = useState(()=>localStorage.getItem("gmail_client_id")||"");
+  const gmailClientId = gmailClientIdOverride || DEFAULT_GMAIL_CLIENT_ID;
+  const setGmailClientId = setGmailClientIdOverride;
   const [showClientIdInput,setShowClientIdInput] = useState(false);
   const [gmailAuthError,setGmailAuthError] = useState("");
 
@@ -1170,12 +1174,13 @@ export default function App() {
                     <div style={{fontSize:12,color:"#b91c1c",background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:8,padding:"6px 10px",marginBottom:10}}>⚠️ {gmailAuthError}</div>
                   )}
                   <div style={{fontSize:12,color:"#666",marginBottom:10,lineHeight:1.6}}>
+                    זו הגדרה חד-פעמית של בעל/ת האפליקציה — לא צריך לעשות את זה שוב לכל משתמש/ת. אם מגדירים את המשתנה <code>VITE_GMAIL_CLIENT_ID</code> בהגדרות ה-build של האתר (Vercel/Netlify/וכו׳), אף אחד לא יראה את המסך הזה בכלל.<br/><br/>
                     נדרש Client ID מ-Google Cloud Console:<br/>
                     1. כנסי ל-console.cloud.google.com<br/>
                     2. צרי פרויקט → Enable Gmail API<br/>
                     3. Credentials → Create OAuth Client ID (Web Application)<br/>
                     4. הוסיפי <b>{window.location.origin}</b> ל-Authorized JavaScript Origins<br/>
-                    5. העתיקי את ה-Client ID לכאן
+                    5. העתיקי את ה-Client ID לכאן (או שמרי אותו כ-VITE_GMAIL_CLIENT_ID בהגדרות האתר)
                   </div>
                   <div style={{display:"flex",gap:8}}>
                     <input autoFocus className="plain-input" style={{flex:1,fontSize:13}} placeholder="xxxxxxxx.apps.googleusercontent.com" value={gmailClientId} onChange={e=>setGmailClientId(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){localStorage.setItem("gmail_client_id",gmailClientId);setShowClientIdInput(false);connectGmail();}if(e.key==="Escape"){setShowClientIdInput(false);setGmailAuthError("");}}}/>
