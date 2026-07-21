@@ -9,6 +9,9 @@ import ListDetailOverlay from "./components/ListDetailOverlay";
 import EmailOverlay from "./components/EmailOverlay";
 import ProjectsOverlay from "./components/ProjectsOverlay";
 import VoiceHelpModal from "./components/VoiceHelpModal";
+import SidePills from "./components/SidePills";
+import VoiceIndicator from "./components/VoiceIndicator";
+import AppHeader from "./components/AppHeader";
 import { APP_CSS } from "./appStyles";
 import { useVoiceCommands } from "./hooks/useVoiceCommands";
 import {
@@ -914,66 +917,19 @@ export default function App() {
 
 
         {/* Side pills — icon-only circle when closed, full pill when open */}
-        {[
-          {key:"shopping", icon:"🛒", label:"קניות",     bottom:216, active:showListsMenu==="shopping",        fn:()=>setShowListsMenu(showListsMenu==="shopping"?null:"shopping")},
-          {key:"notes",    icon:"📝", label:"פתקים",     bottom:172, active:showListsMenu==="notes",           fn:()=>setShowListsMenu(showListsMenu==="notes"?null:"notes")},
-          {key:"projects", icon:"🗂", label:"פרויקטים", bottom:128, active:!!(showProjects||openProjectId),   fn:()=>{setShowProjects(true);setOpenProjectId(null);}},
-          {key:"email",    icon:"📧", label:"מייל",      bottom:84,  active:showEmail,                         fn:()=>setShowEmail(true)},
-        ].map(({key,icon,label,bottom,active,fn})=>(
-          <button key={key}
-            className={`side-pill${active?" active-pill":""}`}
-            style={{bottom, ...(active?{}:{padding:"0",width:38,height:38,minWidth:38,justifyContent:"center",gap:0})}}
-            aria-label={label}
-            onClick={fn}
-          >
-            <span style={{fontSize:active?14:18}}>{icon}</span>
-            {active&&<span>{label}</span>}
-          </button>
-        ))}
-        <button className="fab" style={{background:accent}} aria-label="לכידה מהירה — הוסיפי משימה" onClick={()=>setShowQuickCapture(true)}>+</button>
+        <SidePills
+          accent={accent}
+          showListsMenu={showListsMenu} setShowListsMenu={setShowListsMenu}
+          showProjects={showProjects} openProjectId={openProjectId} setShowProjects={setShowProjects} setOpenProjectId={setOpenProjectId}
+          showEmail={showEmail} setShowEmail={setShowEmail}
+          setShowQuickCapture={setShowQuickCapture}
+        />
 
         {/* Voice indicator — always shown when SR available; tap to activate on first use */}
-        {voiceAvail&&(
-          <div
-            role="button"
-            tabIndex={0}
-            aria-label={voiceState==="off"?"הפעל שליטה קולית":voiceState==="listening"?"מאזין — הקש כדי להשהות":"הקש כדי לדבר"}
-            style={{position:"fixed",bottom:90,right:20,zIndex:250,display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer"}}
-            onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();e.currentTarget.click();}}}
-            onClick={()=>{
-              const r=recognitionRef.current;
-              if(!r) return;
-              if(voiceState==="off"){
-                // First use — start recognition + enter listening immediately
-                voiceActiveRef.current=true;
-                sessionStorage.setItem("voice_on","1");
-                voiceModeRef.current="listening";
-                const sayHi=()=>{ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance("כן?"); u.lang="he-IL"; speechSynthesis.speak(u); };
-                try{ r.start(); setVoiceState("listening"); sayHi(); }catch(err){ console.error("voice: failed to start recognition",err); }
-              } else if(voiceModeRef.current==="listening"){
-                // Already listening — pause
-                voiceModeRef.current="idle"; setVoiceState("idle");
-              } else {
-                // Idle — enter listening
-                const sayHi2=()=>{ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance("כן?"); u.lang="he-IL"; speechSynthesis.speak(u); };
-                voiceModeRef.current="listening"; setVoiceState("listening"); sayHi2();
-              }
-            }}
-          >
-            {voiceLabel&&<div style={{background:"rgba(0,0,0,0.75)",color:"white",fontSize:12,padding:"5px 12px",borderRadius:20,fontFamily:"'Heebo',sans-serif",direction:"rtl",whiteSpace:"nowrap",maxWidth:220,textAlign:"center"}}>{voiceLabel}</div>}
-            {voiceDebug&&!voiceLabel&&<div style={{background:"rgba(80,80,200,0.85)",color:"white",fontSize:11,padding:"4px 10px",borderRadius:20,fontFamily:"'Heebo',sans-serif",direction:"rtl",maxWidth:220,textAlign:"center",fontStyle:"italic"}}>{voiceDebug}</div>}
-            <div style={{width:42,height:42,borderRadius:"50%",background:voiceState==="listening"?"#ef5350":voiceState==="processing"?"#ffa726":"white",border:"2px solid "+(voiceState==="listening"?"#ef5350":voiceState==="processing"?"#ffa726":voiceState==="off"?"#dde":"#dde"),display:"flex",alignItems:"center",justifyContent:"center",boxShadow:voiceState==="listening"?"0 0 0 6px rgba(239,83,80,0.2)":"0 2px 8px rgba(0,0,0,0.1)",transition:"all 0.3s",animation:voiceState==="listening"?"voicePulse 1s ease-in-out infinite":"none",opacity:voiceState==="off"?0.45:1}}>
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <rect x="6" y="1" width="6" height="10" rx="3" fill={voiceState==="listening"?"white":"#aab"}/>
-                <path d="M3 9a6 6 0 0012 0" stroke={voiceState==="listening"?"white":"#aab"} strokeWidth="1.5" strokeLinecap="round"/>
-                <line x1="9" y1="15" x2="9" y2="17" stroke={voiceState==="listening"?"white":"#aab"} strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
-            </div>
-            <div style={{fontSize:9,color:voiceState==="listening"?"#ef5350":"#bbb",fontFamily:"'Heebo',sans-serif",whiteSpace:"nowrap"}}>
-              {voiceState==="off"?"הפעל קול":voiceState==="listening"?"מאזין...":"הקש לדבר"}
-            </div>
-          </div>
-        )}
+        <VoiceIndicator
+          voiceAvail={voiceAvail} voiceState={voiceState} setVoiceState={setVoiceState} voiceLabel={voiceLabel} voiceDebug={voiceDebug}
+          recognitionRef={recognitionRef} voiceModeRef={voiceModeRef} voiceActiveRef={voiceActiveRef}
+        />
 
         {/* Voice commands help */}
         {showVoiceHelp&&(
@@ -987,92 +943,15 @@ export default function App() {
 
 
         {/* Header */}
-        <div className="app-header">
-          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",paddingBottom:10}}>
-            <div>
-              <div className="greeting">שלום, {profiles[activeProfileId]?.name||"👋"}</div>
-              <div className="greeting-date">{new Date().toLocaleDateString("he-IL",{weekday:"long",day:"numeric",month:"long"})}</div>
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4}}>
-              <div ref={profileMenuRef} style={{position:"relative"}}>
-                <button onClick={()=>setShowProfileMenu(p=>!p)} aria-label="תפריט פרופיל" style={{display:"flex",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:"50%",border:"none",background:accent,cursor:"pointer",color:"white",fontFamily:"'Heebo',sans-serif",fontSize:15,fontWeight:700}}>
-                  {profiles[activeProfileId]?.name?.charAt(0)||"?"}
-                </button>
-                {showProfileMenu&&(
-                  <div className="dropdown-menu">
-                    {allProfiles.map(p=>(<button key={p.id} className="dropdown-item" style={{fontWeight:p.id===activeProfileId?600:400}} onClick={()=>switchProfile(p.id)}><span className="profile-avatar">{p.name.charAt(0)}</span>{p.name}{p.id===activeProfileId&&<span style={{marginRight:"auto",fontSize:12}}>✓</span>}</button>))}
-                    <div className="dropdown-divider"/>
-                    <button className="dropdown-item" onClick={()=>{setShowProfileMenu(false);setNewProfileName("");setShowProfileModal(true);}}>+ פרופיל חדש</button>
-                    <button className="dropdown-item danger" onClick={deleteCurrentProfile}>מחק פרופיל נוכחי</button>
-                  </div>
-                )}
-              </div>
-            <div ref={settingsMenuRef} style={{position:"relative"}}>
-              <button onClick={()=>setShowSettingsMenu(p=>!p)} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:"#aaa",padding:"4px 6px",borderRadius:6,lineHeight:1}} aria-label="הגדרות">⚙</button>
-              {showSettingsMenu&&(
-                <div className="dropdown-menu settings-dropdown">
-                  <button className="dropdown-item" onClick={exportBackup}>📤 גיבוי</button>
-                  <button className="dropdown-item" onClick={importBackup}>📥 ייבוא גיבוי</button>
-                  <div className="dropdown-divider"/>
-                  <button className="dropdown-item" onClick={shareWhatsApp}>💬 שתף ב-WhatsApp</button>
-                  {voiceAvail&&<>
-                    <div className="dropdown-divider"/>
-                    <button className="dropdown-item" onClick={()=>{setShowSettingsMenu(false);setShowVoiceHelp(true);}}>🎙️ פקודות קוליות</button>
-                  </>}
-                </div>
-              )}
-            </div>
-            </div>
-          </div>
-          <div style={{position:"relative"}}>
-            <input
-              className="search-bar"
-              placeholder="חיפוש משימות ותזכורות..."
-              value={searchQuery}
-              onChange={e=>setSearchQuery(e.target.value)}
-              onKeyDown={e=>{if(e.key==="Escape")setSearchQuery("");}}
-              style={searchQuery?{paddingLeft:36}:undefined}
-            />
-            {searchQuery&&(
-              <button onClick={()=>setSearchQuery("")} aria-label="נקה חיפוש" style={{position:"absolute",left:14,top:9,background:"none",border:"none",color:"#bbb",fontSize:15,cursor:"pointer",lineHeight:1,padding:2}}>✕</button>
-            )}
-            {searchQuery.trim().length>=2&&(
-              <div style={{position:"absolute",top:"calc(100% - 8px)",right:0,left:0,background:"white",borderRadius:14,boxShadow:"0 6px 24px rgba(0,0,0,0.12)",zIndex:50,maxHeight:320,overflowY:"auto",padding:searchResults.length?"6px 0":"14px"}}>
-                {searchResults.length===0&&<div style={{color:"#bbb",fontSize:13,textAlign:"center"}}>אין תוצאות ל"{searchQuery}"</div>}
-                {searchResults.map((r,i)=>(
-                  <button key={r.itype+r.item.id+i} onClick={()=>goToSearchResult(r)} style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"right",background:"none",border:"none",padding:"9px 16px",cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>
-                    <span style={{fontSize:14}}>{r.itype==="task"?"✓":"🔔"}</span>
-                    <span style={{flex:1,fontSize:14,color:"#1a1a2e",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.item.text}</span>
-                    <span style={{fontSize:11,color:"#bbb",flexShrink:0}}>{r.tab.label}{r.subtab?` / ${r.subtab.label}`:""}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="tab-bar">
-            {tabs.map(t=>(
-              <div key={t.id} className={`tab-pill${activeTab===t.id?" active":""}`} style={{"--accent":t.color}}>
-                <button onClick={()=>{setActiveTab(t.id);setActiveSubtab(null);}} style={{display:"flex",alignItems:"center",gap:5,background:"none",border:"none",padding:0,margin:0,font:"inherit",color:"inherit",cursor:"pointer"}}>
-                  <span className="tab-dot" style={{background:t.color}}/>{t.label}
-                </button>
-                {activeTab===t.id&&(<>
-                  <button aria-label="קבע ככרטיסייה ברירת מחדל" onClick={()=>setDefaultTab(t.id)} style={{fontSize:12,cursor:"pointer",color:profiles[activeProfileId]?.defaultTab===t.id?"#f4a261":"#ddd",marginRight:-2,lineHeight:1,background:"none",border:"none",padding:0}}>★</button>
-                  <button className="icon-btn del" aria-label="מחק כרטיסייה" style={{fontSize:11,marginRight:-2,padding:0,minWidth:"unset",minHeight:"unset",background:"none",border:"none",cursor:"pointer"}} onClick={()=>deleteTab(t.id)}>✕</button>
-                </>)}
-              </div>
-            ))}
-            {showNewTab?(
-              <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                <input autoFocus className="plain-input" style={{width:150,fontSize:13,padding:"6px 10px","--accent":"#2d6a4f"}} placeholder="שם הכרטיסייה" value={newTabInput} onChange={e=>setNewTabInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")addTab();if(e.key==="Escape")setShowNewTab(false);}}/>
-                <button className="add-btn" style={{padding:"6px 12px",fontSize:13,"--accent":"#2d6a4f"}} onClick={addTab}>הוסף</button>
-                <button className="icon-btn" aria-label="בטל כרטיסייה חדשה" onClick={()=>setShowNewTab(false)}>✕</button>
-              </div>
-            ):(
-              <button className="ghost-btn" style={{"--accent":"#2d6a4f"}} onClick={()=>setShowNewTab(true)}>+ כרטיסייה חדשה</button>
-            )}
-          </div>
-        </div>
+        <AppHeader
+          accent={accent} profiles={profiles} activeProfileId={activeProfileId} allProfiles={allProfiles}
+          profileMenuRef={profileMenuRef} showProfileMenu={showProfileMenu} setShowProfileMenu={setShowProfileMenu} switchProfile={switchProfile} setNewProfileName={setNewProfileName} setShowProfileModal={setShowProfileModal} deleteCurrentProfile={deleteCurrentProfile}
+          settingsMenuRef={settingsMenuRef} showSettingsMenu={showSettingsMenu} setShowSettingsMenu={setShowSettingsMenu} exportBackup={exportBackup} importBackup={importBackup} shareWhatsApp={shareWhatsApp}
+          voiceAvail={voiceAvail} setShowVoiceHelp={setShowVoiceHelp}
+          searchQuery={searchQuery} setSearchQuery={setSearchQuery} searchResults={searchResults} goToSearchResult={goToSearchResult}
+          tabs={tabs} activeTab={activeTab} setActiveTab={setActiveTab} setActiveSubtab={setActiveSubtab} setDefaultTab={setDefaultTab} deleteTab={deleteTab}
+          showNewTab={showNewTab} setShowNewTab={setShowNewTab} newTabInput={newTabInput} setNewTabInput={setNewTabInput} addTab={addTab}
+        />
 
         {!currentTab&&(
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"70vh",color:"#bbb",gap:16}}>
