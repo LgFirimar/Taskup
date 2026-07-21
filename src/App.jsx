@@ -14,6 +14,7 @@ import VoiceIndicator from "./components/VoiceIndicator";
 import AppHeader from "./components/AppHeader";
 import TabContent from "./components/TabContent";
 import UndoToast from "./components/UndoToast";
+import CloudBackupModal from "./components/CloudBackupModal";
 import { APP_CSS } from "./appStyles";
 import { useVoiceCommands } from "./hooks/useVoiceCommands";
 import {
@@ -124,6 +125,19 @@ export default function App() {
   const setGmailClientId = setGmailClientIdOverride;
   const [showClientIdInput,setShowClientIdInput] = useState(false);
   const [gmailAuthError,setGmailAuthError] = useState("");
+
+  // ── Cloud backup (Google Drive) ───────────────────────────────────────────
+  // Reuses the same Google Client ID as the Gmail feature (a Client ID isn't
+  // scope-specific — this just requests a separate token with drive.file
+  // access, kept entirely independent of the Gmail token/connection).
+  const [showCloudBackup,setShowCloudBackup] = useState(false);
+  const [driveToken,setDriveToken] = useState(()=>localStorage.getItem("drive_token")||null);
+  const [driveFileId,setDriveFileId] = useState(()=>localStorage.getItem("drive_backup_file_id")||null);
+  const [lastBackupAt,setLastBackupAt] = useState(()=>localStorage.getItem("drive_last_backup")||null);
+  const [backupInProgress,setBackupInProgress] = useState(false);
+  const [restoreInProgress,setRestoreInProgress] = useState(false);
+  const [driveAuthError,setDriveAuthError] = useState("");
+  const autoBackupTimerRef = useRef(null);
 
   // ── Reminder alerts ───────────────────────────────────────────────────────
   const [alertReminders] = useState(computeInitialAlerts);
@@ -543,6 +557,159 @@ export default function App() {
     setEmailLoading(false);
   };
 
+  // ── Cloud backup (Google Drive) ────────────────────────────────────────────
+  const BACKUP_FILE_NAME = "taskup-backup.json";
+
+  const connectDrive = () => {
+    const clientId = gmailClientId.trim();
+    if (!clientId) { setDriveAuthError("קודם צריך להגדיר Google Client ID (באותה הגדרה שמשמשת את חיבור ה-Gmail)."); setShowClientIdInput(true); return; }
+    setDriveAuthError("");
+
+    const initGIS = () => {
+      try{
+        const client = window.google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: "https://www.googleapis.com/auth/drive.file",
+          callback: (response) => {
+            if (response.access_token) {
+              if (response.scope && !response.scope.includes("drive.file")) {
+                setDriveAuthError("ההתחברות הצליחה אבל לא אישרת את ההרשאה לגישה ל-Drive. נסי להתחבר שוב ווודאי שכל ההרשאות מסומנות.");
+                return;
+              }
+              localStorage.setItem("drive_token", response.access_token);
+              setDriveToken(response.access_token);
+              setDriveAuthError("");
+            } else {
+              console.error("Drive auth: no access_token in response",response);
+              setDriveAuthError("החיבור נכשל — ודאי שה-Client ID נכון ונסי שוב.");
+            }
+          },
+          error_callback: (err) => {
+            console.error("Drive auth error",err);
+            setDriveAuthError(err?.type==="popup_closed" ? "החלון נסגר לפני שהושלם החיבור. נסי שוב." : "החיבור ל-Google Drive נכשל. נסי שוב.");
+          },
+        });
+        client.requestAccessToken();
+      }catch(err){
+        console.error("Drive auth: failed to init token client",err);
+        setDriveAuthError("החיבור נכשל — ודאי שה-Client ID תקין ונסי שוב.");
+      }
+    };
+
+    if (window.google?.accounts?.oauth2) {
+      initGIS();
+    } else {
+      const script = document.createElement("script");
+      script.src = "https://accounts.google.com/gsi/client";
+      script.onload = initGIS;
+      script.onerror = () => setDriveAuthError("לא הצלחתי לטעון את שירות ההתחברות של Google. בדקי את החיבור לאינטרנט ונסי שוב.");
+      document.head.appendChild(script);
+    }
+  };
+
+  const disconnectDrive = (message="") => {
+    setDriveToken(null); localStorage.removeItem("drive_token");
+    setDriveFileId(null); localStorage.removeItem("drive_backup_file_id");
+    setDriveAuthError(message);
+  };
+
+  // Finds the existing backup file (drive.file scope only ever sees files this
+  // app created, so a name search is enough — no folder/id bookkeeping needed
+  // beyond caching the id once we know it).
+  const findBackupFileId = async (token) => {
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(`name='${BACKUP_FILE_NAME}' and trashed=false`)}&spaces=drive&fields=files(id,modifiedTime)`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (res.status === 401) throw { driveStatus: 401 };
+    if (res.status === 403) throw { driveStatus: 403, body: await res.json().catch(()=>null) };
+    if (!res.ok) throw new Error(`Drive search failed: ${res.status}`);
+    const data = await res.json();
+    return data.files?.[0]?.id || null;
+  };
+
+  const backupToDrive = async () => {
+    if (!driveToken) return;
+    setBackupInProgress(true);
+    setDriveAuthError("");
+    try {
+      const content = JSON.stringify({ profiles, activeProfile: activeProfileId }, null, 2);
+      let fileId = driveFileId;
+      if (!fileId) fileId = await findBackupFileId(driveToken);
+
+      const metadata = { name: BACKUP_FILE_NAME, mimeType: "application/json" };
+      const boundary = "taskup-backup-boundary";
+      const multipartBody =
+        `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(fileId?{}:metadata)}\r\n` +
+        `--${boundary}\r\nContent-Type: application/json\r\n\r\n${content}\r\n--${boundary}--`;
+
+      const uploadUrl = fileId
+        ? `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`
+        : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
+
+      const res = await fetch(uploadUrl, {
+        method: fileId ? "PATCH" : "POST",
+        headers: { Authorization: `Bearer ${driveToken}`, "Content-Type": `multipart/related; boundary=${boundary}` },
+        body: multipartBody,
+      });
+      if (res.status === 401) { disconnectDrive("החיבור ל-Google Drive פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחברי ל-Drive\" כדי להתחבר מחדש."); return; }
+      if (res.status === 403) {
+        let detail = ""; try { const errBody = await res.json(); detail = errBody?.error?.message || ""; } catch { /* ignore */ }
+        setDriveAuthError(`אין הרשאה (403)${detail?`: ${detail}`:""} — ודאי ש-Google Drive API מופעל בפרויקט ב-Google Cloud Console (אותו פרויקט שבו הפעלת את Gmail API).`);
+        return;
+      }
+      if (!res.ok) throw new Error(`Drive upload failed: ${res.status}`);
+      const data = await res.json();
+      setDriveFileId(data.id); localStorage.setItem("drive_backup_file_id", data.id);
+      const now = new Date().toISOString();
+      setLastBackupAt(now); localStorage.setItem("drive_last_backup", now);
+    } catch(err) {
+      if (err?.driveStatus === 401) { disconnectDrive("החיבור ל-Google Drive פג תוקף — לחצי על \"התחברי ל-Drive\" כדי להתחבר מחדש."); return; }
+      if (err?.driveStatus === 403) {
+        const detail = err.body?.error?.message || "";
+        setDriveAuthError(`אין הרשאה (403)${detail?`: ${detail}`:""} — ודאי ש-Google Drive API מופעל בפרויקט ב-Google Cloud Console.`);
+        return;
+      }
+      console.error("backupToDrive failed",err);
+      setDriveAuthError("הגיבוי נכשל. נסי שוב בעוד רגע.");
+    } finally {
+      setBackupInProgress(false);
+    }
+  };
+
+  const restoreFromDrive = async () => {
+    if (!driveToken) return;
+    if (!window.confirm("שחזור מהגיבוי בענן יחליף את כל הנתונים המקומיים שלך (כל הפרופילים, הכרטיסיות, המשימות והתזכורות) בגרסה השמורה ב-Drive. להמשיך?")) return;
+    setRestoreInProgress(true);
+    setDriveAuthError("");
+    try {
+      const fileId = driveFileId || await findBackupFileId(driveToken);
+      if (!fileId) { setDriveAuthError("לא נמצא גיבוי קודם ב-Drive."); return; }
+      const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, { headers: { Authorization: `Bearer ${driveToken}` } });
+      if (res.status === 401) { disconnectDrive("החיבור ל-Google Drive פג תוקף — לחצי על \"התחברי ל-Drive\" כדי להתחבר מחדש."); return; }
+      if (!res.ok) throw new Error(`Drive download failed: ${res.status}`);
+      const data = await res.json();
+      if (!data.profiles) throw new Error("invalid backup content");
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      window.location.reload();
+    } catch(err) {
+      console.error("restoreFromDrive failed",err);
+      setDriveAuthError("השחזור נכשל — ייתכן שקובץ הגיבוי פגום. נסי שוב.");
+    } finally {
+      setRestoreInProgress(false);
+    }
+  };
+
+  // Auto-backup: after any change to the data, wait for a quiet moment (so we
+  // don't fire a Drive request on every keystroke) and then back up silently.
+  useEffect(() => {
+    if (!driveToken) return;
+    if (autoBackupTimerRef.current) clearTimeout(autoBackupTimerRef.current);
+    autoBackupTimerRef.current = setTimeout(() => { backupToDrive(); }, 10000);
+    return () => { if (autoBackupTimerRef.current) clearTimeout(autoBackupTimerRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profiles, driveToken]);
+
   // ── Profile actions ────────────────────────────────────────────────────────
   const createProfile = ()=>{
     const name=newProfileName.trim(); if(!name)return; const id=uid();
@@ -844,6 +1011,17 @@ export default function App() {
           />
         )}
 
+        {/* Cloud backup overlay */}
+        {showCloudBackup&&(
+          <CloudBackupModal
+            setShowCloudBackup={setShowCloudBackup}
+            driveToken={driveToken} connectDrive={connectDrive} disconnectDrive={disconnectDrive}
+            driveAuthError={driveAuthError} setDriveAuthError={setDriveAuthError}
+            lastBackupAt={lastBackupAt} backupInProgress={backupInProgress} backupToDrive={backupToDrive}
+            restoreInProgress={restoreInProgress} restoreFromDrive={restoreFromDrive}
+          />
+        )}
+
         {/* Projects overlay */}
         {(showProjects||openProjectId)&&(
           <ProjectsOverlay
@@ -893,7 +1071,7 @@ export default function App() {
         <AppHeader
           accent={accent} profiles={profiles} activeProfileId={activeProfileId} allProfiles={allProfiles}
           profileMenuRef={profileMenuRef} showProfileMenu={showProfileMenu} setShowProfileMenu={setShowProfileMenu} switchProfile={switchProfile} setNewProfileName={setNewProfileName} setShowProfileModal={setShowProfileModal} deleteCurrentProfile={deleteCurrentProfile}
-          settingsMenuRef={settingsMenuRef} showSettingsMenu={showSettingsMenu} setShowSettingsMenu={setShowSettingsMenu} exportBackup={exportBackup} importBackup={importBackup} shareWhatsApp={shareWhatsApp}
+          settingsMenuRef={settingsMenuRef} showSettingsMenu={showSettingsMenu} setShowSettingsMenu={setShowSettingsMenu} exportBackup={exportBackup} importBackup={importBackup} shareWhatsApp={shareWhatsApp} setShowCloudBackup={setShowCloudBackup}
           voiceAvail={voiceAvail} setShowVoiceHelp={setShowVoiceHelp}
           searchQuery={searchQuery} setSearchQuery={setSearchQuery} searchResults={searchResults} goToSearchResult={goToSearchResult}
           tabs={tabs} activeTab={activeTab} setActiveTab={setActiveTab} setActiveSubtab={setActiveSubtab} setDefaultTab={setDefaultTab} deleteTab={deleteTab}
