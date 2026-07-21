@@ -1,3 +1,9 @@
 name = "taskup-ai"
 main = "worker.js"
 compatibility_date = "2024-01-01"
+
+# Optional: if you add a custom domain to the Pages site later, set
+# ALLOWED_ORIGIN in the Worker's dashboard environment variables (Workers &
+# Pages → taskup-ai → Settings → Variables) to that domain, e.g.
+# https://taskup.example.com — no code change or redeploy needed for that
+# part. *.pages.dev and localhost are already allowed without any config.
