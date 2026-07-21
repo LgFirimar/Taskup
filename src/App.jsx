@@ -633,7 +633,7 @@ export default function App() {
     setBackupInProgress(true);
     setDriveAuthError("");
     try {
-      const content = JSON.stringify({ profiles, activeProfile: activeProfileId }, null, 2);
+      const content = JSON.stringify({ profiles, activeProfile: activeProfileId, emailRules, customVoiceCommands }, null, 2);
       let fileId = driveFileId;
       if (!fileId) fileId = await findBackupFileId(driveToken);
 
@@ -690,7 +690,9 @@ export default function App() {
       if (!res.ok) throw new Error(`Drive download failed: ${res.status}`);
       const data = await res.json();
       if (!data.profiles) throw new Error("invalid backup content");
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ profiles: data.profiles, activeProfile: data.activeProfile }));
+      if (data.emailRules) localStorage.setItem("email_rules", JSON.stringify(data.emailRules));
+      if (data.customVoiceCommands) localStorage.setItem("voice_custom_commands", JSON.stringify(data.customVoiceCommands));
       window.location.reload();
     } catch(err) {
       console.error("restoreFromDrive failed",err);
@@ -734,7 +736,7 @@ export default function App() {
 
   // ── Backup / share ─────────────────────────────────────────────────────────
   const exportBackup = ()=>{
-    const blob=new Blob([JSON.stringify({profiles,activeProfile:activeProfileId},null,2)],{type:"application/json"});
+    const blob=new Blob([JSON.stringify({profiles,activeProfile:activeProfileId,emailRules,customVoiceCommands},null,2)],{type:"application/json"});
     const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`taskup-backup-${today()}.json`; a.click();
     setShowSettingsMenu(false);
   };
@@ -742,7 +744,13 @@ export default function App() {
     const input=document.createElement("input"); input.type="file"; input.accept=".json";
     input.onchange=(e)=>{
       const reader=new FileReader();
-      reader.onload=(ev)=>{try{const d=JSON.parse(ev.target.result);if(!d.profiles)throw new Error();localStorage.setItem(STORAGE_KEY,JSON.stringify(d));window.location.reload();}catch{alert("קובץ גיבוי לא תקין");}};
+      reader.onload=(ev)=>{try{
+        const d=JSON.parse(ev.target.result);if(!d.profiles)throw new Error();
+        localStorage.setItem(STORAGE_KEY,JSON.stringify({profiles:d.profiles,activeProfile:d.activeProfile}));
+        if(d.emailRules) localStorage.setItem("email_rules",JSON.stringify(d.emailRules));
+        if(d.customVoiceCommands) localStorage.setItem("voice_custom_commands",JSON.stringify(d.customVoiceCommands));
+        window.location.reload();
+      }catch{alert("קובץ גיבוי לא תקין");}};
       reader.readAsText(e.target.files[0]);
     };
     input.click(); setShowSettingsMenu(false);
