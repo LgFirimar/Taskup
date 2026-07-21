@@ -46,6 +46,8 @@ export default function App() {
   const [editId,setEditId] = useState(null);
   const [editText,setEditText] = useState("");
   const [editAlertDate,setEditAlertDate] = useState("");
+  const [editStartDate,setEditStartDate] = useState("");
+  const [editEndDate,setEditEndDate] = useState("");
 
   // ── Search ─────────────────────────────────────────────────────────────────
   const [searchQuery,setSearchQuery] = useState("");
@@ -615,7 +617,10 @@ export default function App() {
 
   const toggleDone = (type,id)=>smartUpdateItem(type,id,i=>({...i,done:!i.done}));
   const deleteItem = (type,id)=>smartDeleteItem(type,id);
-  const saveEdit = (type,id)=>{ smartUpdateItem(type,id,i=>({...i,text:editText,...(type==="reminder"?{alertDate:editAlertDate||null}:{})})); setEditId(null); setEditText(""); setEditAlertDate(""); };
+  const saveEdit = (type,id)=>{
+    smartUpdateItem(type,id,i=>({...i,text:editText,...(type==="reminder"?{alertDate:editAlertDate||null,startDate:editStartDate||null,endDate:editEndDate||null}:{})}));
+    setEditId(null); setEditText(""); setEditAlertDate(""); setEditStartDate(""); setEditEndDate("");
+  };
   const cyclePriority = (id)=>smartUpdateItem("task",id,t=>({...t,priority:PRIO_CYCLE[(PRIO_CYCLE.indexOf(t.priority||null)+1)%4]}));
 
   const handleComplete = (type,id)=>{
@@ -2041,7 +2046,13 @@ export default function App() {
                               <div style={{flex:1,minWidth:0}}>
                                 {editId===item.id
                                   ?<div style={{display:"flex",flexDirection:"column",gap:6}}>
-                                      <input autoFocus className="edit-inline" value={editText} onChange={e=>setEditText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")saveEdit("reminder",item.id);if(e.key==="Escape"){setEditId(null);setEditAlertDate("");}}}/>
+                                      <input autoFocus className="edit-inline" value={editText} onChange={e=>setEditText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")saveEdit("reminder",item.id);if(e.key==="Escape"){setEditId(null);setEditAlertDate("");setEditStartDate("");setEditEndDate("");}}}/>
+                                      <div style={{display:"flex",alignItems:"center",gap:6,background:"#f9f9f8",border:"1px solid #ebebea",borderRadius:8,padding:"6px 10px"}}>
+                                        <span style={{fontSize:11,color:"#888",fontWeight:600,whiteSpace:"nowrap"}}>מ-</span>
+                                        <input type="date" className="edit-inline" style={{fontSize:12,padding:"3px 8px",flex:1,colorScheme:"light"}} value={editStartDate} onChange={e=>setEditStartDate(e.target.value)}/>
+                                        <span style={{fontSize:11,color:"#888",fontWeight:600,whiteSpace:"nowrap"}}>עד-</span>
+                                        <input type="date" className="edit-inline" style={{fontSize:12,padding:"3px 8px",flex:1,colorScheme:"light"}} value={editEndDate} min={editStartDate} onChange={e=>setEditEndDate(e.target.value)}/>
+                                      </div>
                                       <div style={{display:"flex",alignItems:"center",gap:6,background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:8,padding:"6px 10px"}}>
                                         <span style={{fontSize:12,color:"#92400e",fontWeight:600,whiteSpace:"nowrap"}}>🔔 התרע מ-</span>
                                         <input type="date" className="edit-inline" style={{fontSize:12,padding:"3px 8px",flex:1,colorScheme:"light"}} value={editAlertDate} onChange={e=>setEditAlertDate(e.target.value)}/>
@@ -2061,7 +2072,7 @@ export default function App() {
                                   </div>
                                 )}
                               </div>
-                              <button className="icon-btn" style={{fontSize:18}} aria-label="ערוך תזכורת" onClick={()=>{setEditId(item.id);setEditText(item.text);setEditAlertDate(item.alertDate||"");}}>✎</button>
+                              <button className="icon-btn" style={{fontSize:18}} aria-label="ערוך תזכורת" onClick={()=>{setEditId(item.id);setEditText(item.text);setEditAlertDate(item.alertDate||"");setEditStartDate(item.startDate||"");setEditEndDate(item.endDate||"");}}>✎</button>
                               <button className="icon-btn del" aria-label="מחק תזכורת" onClick={()=>deleteItem("reminder",item.id)}>✕</button>
                             </div>
                           </div>
