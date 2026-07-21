@@ -24,7 +24,7 @@ export default function ProjectsOverlay({
         </button>
         <span style={{fontWeight:800,fontSize:17,flex:1,color:"#1a1a2e"}}>{openProject?openProject.name:"פרויקטים"}</span>
         {openProject&&(
-          <div style={{fontSize:12,color:"#aaa",fontWeight:500}}>התקדמות {getProjectProgress(openProject)}%</div>
+          <div style={{fontSize:12,color:"#6b6b6b",fontWeight:500}}>התקדמות {getProjectProgress(openProject)}%</div>
         )}
       </div>
 
@@ -49,7 +49,7 @@ export default function ProjectsOverlay({
                 <div style={{marginTop:8,height:5,background:"#f0f0f8",borderRadius:10,overflow:"hidden"}}>
                   <div style={{height:"100%",background:accent,width:`${prog}%`,borderRadius:10,transition:"width 0.4s"}}/>
                 </div>
-                <div style={{fontSize:11,color:"#bbb",marginTop:5}}>{pj.tasks.filter(t=>t.done).length}/{pj.tasks.length} משימות • {prog}%</div>
+                <div style={{fontSize:11,color:"#6b6b6b",marginTop:5}}>{pj.tasks.filter(t=>t.done).length}/{pj.tasks.length} משימות • {prog}%</div>
               </div>
             );
           })}
@@ -69,7 +69,7 @@ export default function ProjectsOverlay({
         {/* View tabs */}
         <div style={{display:"flex",gap:0,background:"white",borderBottom:"1px solid #eeeef5",padding:"0 20px",overflowX:"auto"}}>
           {[["overview","סקירה"],["tasks","משימות"],["timeline","לו״ז"],["brainstorm","Brain Storm"],["board","השראה"]].map(([v,label])=>(
-            <button key={v} onClick={()=>setProjectView(v)} style={{padding:"11px 14px",border:"none",background:"none",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:13,fontWeight:projectView===v?700:400,color:projectView===v?accent:"#aaa",borderBottom:projectView===v?`2px solid ${accent}`:"2px solid transparent",transition:"all 0.15s",whiteSpace:"nowrap"}}>{label}</button>
+            <button key={v} onClick={()=>setProjectView(v)} style={{padding:"11px 14px",border:"none",background:"none",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:13,fontWeight:projectView===v?700:400,color:projectView===v?accent:"#6b6b6b",borderBottom:projectView===v?`2px solid ${accent}`:"2px solid transparent",transition:"all 0.15s",whiteSpace:"nowrap"}}>{label}</button>
           ))}
         </div>
 
@@ -97,10 +97,10 @@ export default function ProjectsOverlay({
                   <div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:i<Math.min(pendingTasks.length,3)-1?"1px solid #f5f5fc":"none",borderRight:`3px solid ${accent}`}}>
                     <button onClick={()=>toggleProjectTask(openProject.id,t.id)} aria-label="סמן משימה כבוצעה" style={{width:18,height:18,borderRadius:4,border:`2px solid #dde`,background:"white",cursor:"pointer",flexShrink:0}}/>
                     <span style={{fontSize:13,color:"#1a1a2e",flex:1}}>{t.text}</span>
-                    {(t.subtasks||[]).length>0&&<span style={{fontSize:11,color:"#bbb"}}>{(t.subtasks||[]).filter(s=>s.done).length}/{(t.subtasks||[]).length}</span>}
+                    {(t.subtasks||[]).length>0&&<span style={{fontSize:11,color:"#6b6b6b"}}>{(t.subtasks||[]).filter(s=>s.done).length}/{(t.subtasks||[]).length}</span>}
                   </div>
                 ))}
-                {pendingTasks.length>3&&<div style={{padding:"8px 14px",fontSize:12,color:"#bbb",cursor:"pointer"}} onClick={()=>setProjectView("tasks")}>+ עוד {pendingTasks.length-3} משימות</div>}
+                {pendingTasks.length>3&&<div style={{padding:"8px 14px",fontSize:12,color:"#6b6b6b",cursor:"pointer"}} onClick={()=>setProjectView("tasks")}>+ עוד {pendingTasks.length-3} משימות</div>}
               </div>
 
               {/* Timeline preview */}
@@ -110,11 +110,11 @@ export default function ProjectsOverlay({
                 {tl.slice(0,3).map((item,i)=>(
                   <div key={item.id} style={{display:"flex",alignItems:"center",gap:12,marginBottom:i<Math.min(tl.length,3)-1?10:0}}>
                     <div style={{width:10,height:10,borderRadius:"50%",background:accent,flexShrink:0}}/>
-                    <span style={{fontSize:11,color:"#aaa",fontWeight:600,minWidth:50}}>{item.date?new Date(item.date+"T00:00:00").toLocaleDateString("he-IL",{day:"numeric",month:"short"}):""}</span>
+                    <span style={{fontSize:11,color:"#6b6b6b",fontWeight:600,minWidth:50}}>{item.date?new Date(item.date+"T00:00:00").toLocaleDateString("he-IL",{day:"numeric",month:"short"}):""}</span>
                     <span style={{fontSize:13,color:"#1a1a2e"}}>{item.text}</span>
                   </div>
                 ))}
-                {tl.length===0&&<div style={{color:"#ccc",fontSize:12,textAlign:"center"}}>—</div>}
+                {tl.length===0&&<div style={{color:"#6b6b6b",fontSize:12,textAlign:"center"}}>—</div>}
               </div>
 
               {/* Brainstorm preview */}
@@ -140,7 +140,7 @@ export default function ProjectsOverlay({
                       </div>
                     );
                   })}
-                  {bubbles.length>4&&<div style={{fontSize:12,color:"#bbb",alignSelf:"center",paddingRight:4}}>+{bubbles.length-4}</div>}
+                  {bubbles.length>4&&<div style={{fontSize:12,color:"#6b6b6b",alignSelf:"center",paddingRight:4}}>+{bubbles.length-4}</div>}
                 </div>
               )}
 
@@ -152,7 +152,7 @@ export default function ProjectsOverlay({
                   {board.slice(0,2).map(item=>(
                     <div key={item.id} style={{background:"white",borderRadius:12,padding:"12px",boxShadow:"0 1px 6px rgba(0,0,0,0.06)",minHeight:70,fontSize:12,color:"#555",lineHeight:1.5}}>{item.text}</div>
                   ))}
-                  {board.length>2&&<div style={{background:"#f8f8fc",borderRadius:12,padding:"12px",fontSize:12,color:"#bbb",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} onClick={()=>setProjectView("board")}>+{board.length-2} עוד</div>}
+                  {board.length>2&&<div style={{background:"#f8f8fc",borderRadius:12,padding:"12px",fontSize:12,color:"#6b6b6b",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}} onClick={()=>setProjectView("board")}>+{board.length-2} עוד</div>}
                 </div>
               )}
             </>);
@@ -221,7 +221,7 @@ export default function ProjectsOverlay({
                   <div style={{position:"absolute",right:0,top:6,bottom:-16,width:2,background:i<(openProject.timeline||[]).length-1?"#eeeef5":"transparent"}}/>
                   <div style={{width:12,height:12,borderRadius:"50%",background:accent,flexShrink:0,marginTop:3,position:"relative",zIndex:1}}/>
                   <div style={{flex:1}}>
-                    <div style={{fontSize:11,color:"#bbb",fontWeight:600,marginBottom:2}}>{item.date?new Date(item.date+"T00:00:00").toLocaleDateString("he-IL",{day:"numeric",month:"short"}):""}</div>
+                    <div style={{fontSize:11,color:"#6b6b6b",fontWeight:600,marginBottom:2}}>{item.date?new Date(item.date+"T00:00:00").toLocaleDateString("he-IL",{day:"numeric",month:"short"}):""}</div>
                     <div style={{fontSize:14,color:"#1a1a2e",fontWeight:500}}>{item.text}</div>
                   </div>
                   <button onClick={()=>deleteTimelineItem(openProject.id,item.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#dde",fontSize:13}} aria-label="מחק אבן דרך">✕</button>
@@ -267,7 +267,7 @@ export default function ProjectsOverlay({
                   );
                 })}
               </div>
-              {(openProject.bubbles||[]).length===0&&<div style={{color:"#ccc",textAlign:"center",fontSize:13,marginTop:40}}>הוסיפי רעיונות למטה</div>}
+              {(openProject.bubbles||[]).length===0&&<div style={{color:"#6b6b6b",textAlign:"center",fontSize:13,marginTop:40}}>הוסיפי רעיונות למטה</div>}
             </div>
             <div style={{display:"flex",gap:8}}>
               <input className="plain-input" style={{flex:1}} placeholder="רעיון חדש..." value={newBubbleText} onChange={e=>setNewBubbleText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"){addBubble(openProject.id,newBubbleText,"user");setNewBubbleText("");}}}/>

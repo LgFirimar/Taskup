@@ -13,7 +13,7 @@ export default function ListsMenu({
           <button key={list.id} onClick={()=>{setOpenListId(list.id);setOpenListType(showListsMenu);setShowListsMenu(null);setShowNewListInput(false);}}
             style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 10px",borderRadius:8,border:"1px solid #ebebea",background:"white",cursor:"pointer",marginBottom:6,fontFamily:"'Heebo',sans-serif",fontSize:14,color:"#1a1a1a",textAlign:"right"}}>
             <span style={{flex:1}}>{list.name}</span>
-            <span style={{fontSize:11,color:"#bbb"}}>{showListsMenu==="shopping"?(list.items||[]).filter(i=>!i.done).length:"📄"}</span>
+            <span style={{fontSize:11,color:"#6b6b6b"}}>{showListsMenu==="shopping"?(list.items||[]).filter(i=>!i.done).length:"📄"}</span>
           </button>
         ))}
         {showNewListInput?(

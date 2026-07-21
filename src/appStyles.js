@@ -12,7 +12,7 @@ export const APP_CSS = `
     /* ── Header ── */
     .app-header{background:white;border-bottom:1px solid #eeeef5;padding:16px 20px 0;}
     .greeting{font-size:22px;font-weight:800;color:#1a1a2e;letter-spacing:-0.02em;line-height:1.2;}
-    .greeting-date{font-size:13px;color:#aaa;font-weight:400;margin-top:2px;margin-bottom:14px;}
+    .greeting-date{font-size:13px;color:#6b6b6b;font-weight:400;margin-top:2px;margin-bottom:14px;}
     .search-bar{
       width:100%;padding:10px 16px;border-radius:100px;
       border:none;background:#f0f0f8;color:#555;
@@ -28,7 +28,7 @@ export const APP_CSS = `
       padding:6px 14px;border-radius:100px;border:none;
       background:transparent;
       font-family:'Heebo',sans-serif;font-size:13px;font-weight:500;
-      color:#aaa;white-space:nowrap;transition:all 0.18s;
+      color:#6b6b6b;white-space:nowrap;transition:all 0.18s;
     }
     .tab-pill:hover{background:#f4f4fb;color:#666;}
     .tab-pill.active{color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,white);font-weight:700;}
@@ -46,7 +46,7 @@ export const APP_CSS = `
       padding:5px 14px;border-radius:100px;
       border:1.5px solid #e8e8f2;background:white;
       cursor:pointer;font-family:'Heebo',sans-serif;font-size:12.5px;
-      color:#aaa;transition:all 0.15s;
+      color:#6b6b6b;transition:all 0.15s;
     }
     .sub-chip:hover{border-color:#c8c8e8;color:#666;}
     .sub-chip.active{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,white);font-weight:600;}
@@ -72,7 +72,7 @@ export const APP_CSS = `
     .ghost-btn{
       border:1.5px dashed #dde;border-radius:12px;background:none;
       padding:7px 14px;font-family:'Heebo',sans-serif;font-size:12.5px;
-      color:#bbb;cursor:pointer;transition:all 0.15s;
+      color:#6b6b6b;cursor:pointer;transition:all 0.15s;
     }
     .ghost-btn:hover{border-color:var(--accent);color:var(--accent);}
 
@@ -125,7 +125,7 @@ export const APP_CSS = `
 
     /* ── Icon buttons ── */
     .icon-btn{
-      background:none;border:none;cursor:pointer;color:#ccc;font-size:15px;
+      background:none;border:none;cursor:pointer;color:#8a8a8a;font-size:15px;
       padding:3px 5px;transition:color 0.12s;flex-shrink:0;line-height:1;
       min-width:26px;min-height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;
     }
@@ -187,7 +187,7 @@ export const APP_CSS = `
     .alert-item{display:flex;align-items:flex-start;gap:10px;padding:11px 13px;background:#fffbeb;border:1.5px solid #fde68a;border-radius:12px;}
 
     /* ── Empty states ── */
-    .empty-state{color:#ccc;font-size:13px;text-align:center;padding:24px;border:1.5px dashed #e8e8f2;border-radius:12px;background:white;}
+    .empty-state{color:#6b6b6b;font-size:13px;text-align:center;padding:24px;border:1.5px dashed #e8e8f2;border-radius:12px;background:white;}
 
     /* ── Animations ── */
     @keyframes ringOut{0%{transform:scale(0.8);opacity:0.8}100%{transform:scale(3.5);opacity:0}}

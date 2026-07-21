@@ -119,7 +119,7 @@ export default function TabContent({
 
   if (!currentTab) {
     return (
-      <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"70vh",color:"#bbb",gap:16}}>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"70vh",color:"#6b6b6b",gap:16}}>
         <div style={{fontSize:48}}>📋</div>
         <div style={{fontSize:18,fontWeight:500,color:"#999"}}>אין כרטיסיות עדיין</div>
         <div style={{fontSize:14}}>לחצי על "+ כרטיסייה חדשה" כדי להתחיל</div>
@@ -201,7 +201,7 @@ export default function TabContent({
               <div key={item.id} className="task-row" style={{opacity:0.45}}>
                 <div style={{width:20,height:20,borderRadius:"50%",border:"2px solid #ddd",background:"white",flexShrink:0,marginTop:1}}/>
                 <div style={{flex:1}}><span style={{fontSize:14,textDecoration:"line-through",color:"#888"}}>{item.text}</span></div>
-                <button className="icon-btn" style={{color:"#bbb",fontSize:13,fontWeight:700}} aria-label="שחזר משימה" onClick={()=>toggleDone("task",item.id)}>↩</button>
+                <button className="icon-btn" style={{color:"#8a8a8a",fontSize:13,fontWeight:700}} aria-label="שחזר משימה" onClick={()=>toggleDone("task",item.id)}>↩</button>
                 <button className="icon-btn del" aria-label="מחק משימה" onClick={()=>deleteItem("task",item.id)}>✕</button>
               </div>
             ))}
@@ -228,12 +228,12 @@ export default function TabContent({
               <>
               <div style={{display:"flex",gap:8,alignItems:"center",background:"#f9f9f8",border:"1px solid #ebebea",borderRadius:8,padding:"10px 12px"}}>
                 <div style={{display:"flex",flexDirection:"column",gap:3,flex:1}}>
-                  <label style={{fontSize:11,color:"#aaa",fontWeight:600}}>מתאריך</label>
+                  <label style={{fontSize:11,color:"#6b6b6b",fontWeight:600}}>מתאריך</label>
                   <input type="date" className="plain-input" style={{fontSize:13,padding:"6px 10px",colorScheme:"light"}} value={reminderStart} onChange={e=>setReminderStart(e.target.value)}/>
                 </div>
                 <div style={{color:"#ccc",marginTop:16}}>—</div>
                 <div style={{display:"flex",flexDirection:"column",gap:3,flex:1}}>
-                  <label style={{fontSize:11,color:"#aaa",fontWeight:600}}>עד תאריך</label>
+                  <label style={{fontSize:11,color:"#6b6b6b",fontWeight:600}}>עד תאריך</label>
                   <input type="date" className="plain-input" style={{fontSize:13,padding:"6px 10px",colorScheme:"light"}} value={reminderEnd} min={reminderStart} onChange={e=>setReminderEnd(e.target.value)}/>
                 </div>
               </div>
@@ -256,7 +256,7 @@ export default function TabContent({
                   const status=getReminderStatus(item.startDate,item.endDate);
                   const daysUntilStart=getDaysUntil(item.startDate);
                   const daysUntilEnd=getDaysUntil(item.endDate);
-                  const statusColor=status==="active"?accent:status==="future"?"#5c6bc0":"#bbb";
+                  const statusColor=status==="active"?accent:status==="future"?"#5c6bc0":"#8a8a8a";
                   const statusLabel=status==="active"?"פעיל עכשיו":status==="future"?"עתידי":status==="past"?"עבר":"";
                   const cardClass=`reminder-card${status==="active"?" active-r":status==="future"?" future-r":status==="past"?" past-r":""}`;
                   return (

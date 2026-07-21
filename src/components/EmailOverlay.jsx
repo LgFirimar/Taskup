@@ -43,7 +43,7 @@ export default function EmailOverlay({
           <div style={{background:"#fffbeb",border:"1.5px solid #fcd34d",borderRadius:14,padding:16,marginBottom:16}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
               <div style={{fontSize:13,fontWeight:700}}>🔑 Google OAuth Client ID</div>
-              <button onClick={()=>{setShowClientIdInput(false);setGmailAuthError("");}} aria-label="סגור" style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",fontSize:16,lineHeight:1}}>✕</button>
+              <button onClick={()=>{setShowClientIdInput(false);setGmailAuthError("");}} aria-label="סגור" style={{background:"none",border:"none",cursor:"pointer",color:"#8a8a8a",fontSize:16,lineHeight:1}}>✕</button>
             </div>
             {gmailAuthError&&(
               <div style={{fontSize:12,color:"#b91c1c",background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:8,padding:"6px 10px",marginBottom:10}}>⚠️ {gmailAuthError}</div>
@@ -74,7 +74,7 @@ export default function EmailOverlay({
           <div style={{background:"white",borderRadius:14,padding:16,marginBottom:12,boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
               <span style={{fontSize:13,fontWeight:700}}>{newRule.id?"עריכת חוק":"חוק חדש"}</span>
-              <button onClick={()=>{setShowNewRule(false);setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false});}} style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",fontSize:18,lineHeight:1}} aria-label="בטל">✕</button>
+              <button onClick={()=>{setShowNewRule(false);setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false});}} style={{background:"none",border:"none",cursor:"pointer",color:"#8a8a8a",fontSize:18,lineHeight:1}} aria-label="בטל">✕</button>
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               <input className="plain-input" style={{fontSize:13}} placeholder="שולח (לדוג' momence.com, אופציונלי)" value={newRule.sender} onChange={e=>setNewRule(p=>({...p,sender:e.target.value}))}/>
@@ -97,7 +97,7 @@ export default function EmailOverlay({
                 </label>
                 {!newRule.dateAll&&<input type="date" className="plain-input" style={{flex:1,fontSize:12,padding:"4px 8px",colorScheme:"light"}} value={newRule.dateFrom||""} onChange={e=>setNewRule(p=>({...p,dateFrom:e.target.value}))} placeholder="מתאריך"/>}
               </div>
-              {!newRule.dateAll&&!newRule.dateFrom&&<div style={{fontSize:11,color:"#aaa",marginTop:-4}}>בלי תאריך ובלי "כל המיילים" — מחפש רק 30 הימים האחרונים.</div>}
+              {!newRule.dateAll&&!newRule.dateFrom&&<div style={{fontSize:11,color:"#6b6b6b",marginTop:-4}}>בלי תאריך ובלי "כל המיילים" — מחפש רק 30 הימים האחרונים.</div>}
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                 {[["bullets","• נקודות"],["summary","📝 סיכום"],["tasks","✅ משימות"],["dates","📅 תאריכים"]].map(([v,l])=>(
                   <button key={v} onClick={()=>setNewRule(p=>({...p,format:v}))} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${newRule.format===v?accent:"#dde"}`,background:newRule.format===v?`${accent}15`:"white",color:newRule.format===v?accent:"#888",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,fontWeight:newRule.format===v?700:400}}>{l}</button>
@@ -127,7 +127,7 @@ export default function EmailOverlay({
                 {rule.dateAll?"כל המיילים":rule.dateFrom?`מ-${formatDate(rule.dateFrom)}`:"30 ימים אחרונים"}
               </div>
             </div>
-            <button onClick={()=>{setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false,...rule});setShowNewRule(true);}} style={{background:"none",border:"none",color:"#bbb",cursor:"pointer",fontSize:15}} aria-label="ערוך חוק">✎</button>
+            <button onClick={()=>{setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false,...rule});setShowNewRule(true);}} style={{background:"none",border:"none",color:"#8a8a8a",cursor:"pointer",fontSize:15}} aria-label="ערוך חוק">✎</button>
             <button onClick={()=>saveEmailRules(emailRules.filter(r=>r.id!==rule.id))} style={{background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:16}} aria-label="מחק חוק">✕</button>
           </div>
         ))}
@@ -151,7 +151,7 @@ export default function EmailOverlay({
         {/* Summaries */}
         {emailSummaries.map((s,i)=>(
           <div key={s.id||i} style={{background:"white",borderRadius:16,padding:"16px 18px",marginBottom:12,boxShadow:"0 1px 8px rgba(0,0,0,0.07)"}}>
-            <div style={{fontSize:11,color:"#bbb",marginBottom:4}}>{s.sender} • {s.date?new Date(s.date).toLocaleDateString("he-IL",{day:"numeric",month:"short"}):"" }</div>
+            <div style={{fontSize:11,color:"#6b6b6b",marginBottom:4}}>{s.sender} • {s.date?new Date(s.date).toLocaleDateString("he-IL",{day:"numeric",month:"short"}):"" }</div>
             <div style={{fontWeight:700,fontSize:14,marginBottom:10,color:"#1a1a2e"}}>{s.subject}</div>
             <div style={{fontSize:13,color:"#444",lineHeight:1.7,whiteSpace:"pre-line"}}>{s.summary}</div>
           </div>

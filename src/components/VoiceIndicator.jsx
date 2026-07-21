@@ -41,7 +41,7 @@ export default function VoiceIndicator({
           <line x1="9" y1="15" x2="9" y2="17" stroke={voiceState==="listening"?"white":"#aab"} strokeWidth="1.5" strokeLinecap="round"/>
         </svg>
       </div>
-      <div style={{fontSize:9,color:voiceState==="listening"?"#ef5350":"#bbb",fontFamily:"'Heebo',sans-serif",whiteSpace:"nowrap"}}>
+      <div style={{fontSize:9,color:voiceState==="listening"?"#ef5350":"#6b6b6b",fontFamily:"'Heebo',sans-serif",whiteSpace:"nowrap"}}>
         {voiceState==="off"?"הפעל קול":voiceState==="listening"?"מאזין...":"הקש לדבר"}
       </div>
     </div>

@@ -12,7 +12,7 @@ export default function VoiceHelpModal({
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontSize:20}}>🎙️</span>
           <span style={{fontWeight:700,fontSize:16,flex:1}}>פקודות קוליות</span>
-          <button onClick={()=>setShowVoiceHelp(false)} aria-label="סגור" style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",fontSize:18,lineHeight:1}}>✕</button>
+          <button onClick={()=>setShowVoiceHelp(false)} aria-label="סגור" style={{background:"none",border:"none",cursor:"pointer",color:"#8a8a8a",fontSize:18,lineHeight:1}}>✕</button>
         </div>
         <div style={{overflowY:"auto",flex:1,display:"flex",flexDirection:"column",gap:14,fontSize:13,lineHeight:1.6}}>
           {[
@@ -32,7 +32,7 @@ export default function VoiceHelpModal({
               ))}
             </div>
           ))}
-          <div style={{fontSize:12,color:"#aaa",borderTop:"1px solid #f0f0f8",paddingTop:10}}>
+          <div style={{fontSize:12,color:"#6b6b6b",borderTop:"1px solid #f0f0f8",paddingTop:10}}>
             לוחצים על סמל המיקרופון כדי להתחיל להאזין, ואז אומרים אחת מהפקודות למעלה.
           </div>
 
@@ -40,7 +40,7 @@ export default function VoiceHelpModal({
           <div style={{borderTop:"1px solid #f0f0f8",paddingTop:12,display:"flex",flexDirection:"column",gap:10}}>
             <div style={{fontWeight:700,fontSize:13,color:"#1a1a2e"}}>פקודות מותאמות אישית</div>
             {customVoiceCommands.length===0&&!showAddVoiceCmd&&(
-              <div style={{fontSize:12,color:"#aaa"}}>עוד לא הוספת פקודות משלך — אפשר להוסיף כינוי לפעולה קיימת (למשל "תרשמי לי" במקום "משימה") או קיצור דרך קבוע (למשל "לעבודה" שפותח ישר כרטיסייה מסוימת).</div>
+              <div style={{fontSize:12,color:"#6b6b6b"}}>עוד לא הוספת פקודות משלך — אפשר להוסיף כינוי לפעולה קיימת (למשל "תרשמי לי" במקום "משימה") או קיצור דרך קבוע (למשל "לעבודה" שפותח ישר כרטיסייה מסוימת).</div>
             )}
             {customVoiceCommands.map(c=>(
               <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,background:"#f7f7fb",borderRadius:10,padding:"8px 10px"}}>

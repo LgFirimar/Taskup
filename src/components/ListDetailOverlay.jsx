@@ -37,7 +37,7 @@ export default function ListDetailOverlay({
       {/* Shopping: items list */}
       {openListType==="shopping"&&<>
         <div style={{flex:1,overflowY:"auto",padding:"8px 20px 100px"}}>
-          {(!openList.items||openList.items.length===0)&&<div style={{color:"#ccc",fontSize:14,textAlign:"center",padding:"40px 0"}}>רשימה ריקה — הוסיפי פריטים למטה</div>}
+          {(!openList.items||openList.items.length===0)&&<div style={{color:"#6b6b6b",fontSize:14,textAlign:"center",padding:"40px 0"}}>רשימה ריקה — הוסיפי פריטים למטה</div>}
           {(openList.items||[]).filter(item=>!item.done).map(item=>(
             <div key={item.id} className="list-item-row">
               <button onClick={()=>toggleShoppingItem(openListId,item.id)} aria-label={`סמני "${item.text}" כנקנה`} style={{width:18,height:18,minWidth:18,borderRadius:"50%",border:`1.5px solid ${accent}`,background:"none",padding:0,cursor:"pointer",flexShrink:0}}/>
@@ -46,22 +46,22 @@ export default function ListDetailOverlay({
                     onKeyDown={e=>{if(e.key==="Enter")editShoppingItem(openListId,item.id,editingShoppingItem.text);if(e.key==="Escape")setEditingShoppingItem(null);}}/>
                 :<span style={{flex:1,fontSize:15,color:"#1a1a1a",lineHeight:1.5}}>{item.text}</span>
               }
-              <button onClick={()=>setEditingShoppingItem({listId:openListId,itemId:item.id,text:item.text})} style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}} aria-label="ערוך פריט">✎</button>
-              <button onClick={()=>deleteShoppingItem(openListId,item.id)} style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}} aria-label="מחק פריט">✕</button>
+              <button onClick={()=>setEditingShoppingItem({listId:openListId,itemId:item.id,text:item.text})} style={{background:"none",border:"none",color:"#8a8a8a",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}} aria-label="ערוך פריט">✎</button>
+              <button onClick={()=>deleteShoppingItem(openListId,item.id)} style={{background:"none",border:"none",color:"#8a8a8a",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}} aria-label="מחק פריט">✕</button>
             </div>
           ))}
 
           {(openList.items||[]).some(item=>item.done)&&(()=>{
             const bought=(openList.items||[]).filter(item=>item.done);
             return <>
-              <button onClick={()=>setShowBoughtItems(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,color:"#bbb",fontWeight:600,padding:"10px 4px 6px",display:"flex",alignItems:"center",gap:6}}>
+              <button onClick={()=>setShowBoughtItems(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,color:"#6b6b6b",fontWeight:600,padding:"10px 4px 6px",display:"flex",alignItems:"center",gap:6}}>
                 נקנה ({bought.length}) <span style={{fontSize:9}}>{showBoughtItems?"▲":"▼"}</span>
               </button>
               {showBoughtItems&&bought.map(item=>(
                 <div key={item.id} className="list-item-row">
                   <button onClick={()=>toggleShoppingItem(openListId,item.id)} aria-label={`בטלי סימון "${item.text}" כנקנה`} style={{width:18,height:18,minWidth:18,borderRadius:"50%",border:`1.5px solid ${accent}`,background:accent,padding:0,cursor:"pointer",flexShrink:0}}/>
                   <span style={{flex:1,fontSize:15,color:"#bbb",lineHeight:1.5,textDecoration:"line-through"}}>{item.text}</span>
-                  <button onClick={()=>deleteShoppingItem(openListId,item.id)} style={{background:"none",border:"none",color:"#ccc",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}} aria-label="מחק פריט">✕</button>
+                  <button onClick={()=>deleteShoppingItem(openListId,item.id)} style={{background:"none",border:"none",color:"#8a8a8a",fontSize:16,cursor:"pointer",padding:"2px 4px",lineHeight:1}} aria-label="מחק פריט">✕</button>
                 </div>
               ))}
             </>;
@@ -69,7 +69,7 @@ export default function ListDetailOverlay({
         </div>
         {/* Fixed add bar — stays above keyboard on mobile */}
         <div style={{position:"fixed",bottom:0,left:0,right:0,padding:"12px 20px",paddingBottom:"calc(12px + env(safe-area-inset-bottom, 0px))",borderTop:"1px solid #ebebea",background:"white",zIndex:201}}>
-          <div style={{fontSize:11,color:"#bbb",marginBottom:6,fontWeight:600}}>פסיקים בין פריטים, או משפט חופשי</div>
+          <div style={{fontSize:11,color:"#6b6b6b",marginBottom:6,fontWeight:600}}>פסיקים בין פריטים, או משפט חופשי</div>
           <div style={{display:"flex",gap:10}}>
             <input autoFocus className="plain-input" style={{flex:1,fontSize:15}} placeholder='חלב, ביצים, לחם  או  "תקני גם יוגורט"' value={listItemInput} onChange={e=>setListItemInput(e.target.value)}
               onKeyDown={e=>{if(e.key==="Enter"){parseAndAddItems(openListId,listItemInput);setListItemInput("");}}}/>

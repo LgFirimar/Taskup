@@ -31,7 +31,7 @@ export default function AppHeader({
             )}
           </div>
         <div ref={settingsMenuRef} style={{position:"relative"}}>
-          <button onClick={()=>setShowSettingsMenu(p=>!p)} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:"#aaa",padding:"4px 6px",borderRadius:6,lineHeight:1}} aria-label="הגדרות">⚙</button>
+          <button onClick={()=>setShowSettingsMenu(p=>!p)} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:"#8a8a8a",padding:"4px 6px",borderRadius:6,lineHeight:1}} aria-label="הגדרות">⚙</button>
           {showSettingsMenu&&(
             <div className="dropdown-menu settings-dropdown">
               <button className="dropdown-item" onClick={exportBackup}>📤 גיבוי</button>
@@ -57,16 +57,16 @@ export default function AppHeader({
           style={searchQuery?{paddingLeft:36}:undefined}
         />
         {searchQuery&&(
-          <button onClick={()=>setSearchQuery("")} aria-label="נקה חיפוש" style={{position:"absolute",left:14,top:9,background:"none",border:"none",color:"#bbb",fontSize:15,cursor:"pointer",lineHeight:1,padding:2}}>✕</button>
+          <button onClick={()=>setSearchQuery("")} aria-label="נקה חיפוש" style={{position:"absolute",left:14,top:9,background:"none",border:"none",color:"#8a8a8a",fontSize:15,cursor:"pointer",lineHeight:1,padding:2}}>✕</button>
         )}
         {searchQuery.trim().length>=2&&(
           <div style={{position:"absolute",top:"calc(100% - 8px)",right:0,left:0,background:"white",borderRadius:14,boxShadow:"0 6px 24px rgba(0,0,0,0.12)",zIndex:50,maxHeight:320,overflowY:"auto",padding:searchResults.length?"6px 0":"14px"}}>
-            {searchResults.length===0&&<div style={{color:"#bbb",fontSize:13,textAlign:"center"}}>אין תוצאות ל"{searchQuery}"</div>}
+            {searchResults.length===0&&<div style={{color:"#6b6b6b",fontSize:13,textAlign:"center"}}>אין תוצאות ל"{searchQuery}"</div>}
             {searchResults.map((r,i)=>(
               <button key={r.itype+r.item.id+i} onClick={()=>goToSearchResult(r)} style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"right",background:"none",border:"none",padding:"9px 16px",cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>
                 <span style={{fontSize:14}}>{r.itype==="task"?"✓":"🔔"}</span>
                 <span style={{flex:1,fontSize:14,color:"#1a1a2e",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.item.text}</span>
-                <span style={{fontSize:11,color:"#bbb",flexShrink:0}}>{r.tab.label}{r.subtab?` / ${r.subtab.label}`:""}</span>
+                <span style={{fontSize:11,color:"#6b6b6b",flexShrink:0}}>{r.tab.label}{r.subtab?` / ${r.subtab.label}`:""}</span>
               </button>
             ))}
           </div>
