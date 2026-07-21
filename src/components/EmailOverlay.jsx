@@ -1,4 +1,11 @@
+import { useState } from "react";
 import { uid, formatDate } from "../utils";
+
+const FORMAT_OPTIONS = [["bullets","• נקודות"],["summary","📝 סיכום"],["tasks","✅ משימות"],["dates","📅 תאריכים"]];
+const FORMAT_LABELS = Object.fromEntries(FORMAT_OPTIONS);
+// A rule created before multi-select support only has a singular `format`
+// string — this reads either shape back as an array so old rules keep working.
+const ruleFormats = (rule) => (rule?.formats?.length ? rule.formats : [rule?.format || "bullets"]);
 
 // Full-screen "email summaries" feature: Gmail connect/auth, summarization
 // rule management, and the fetched summary cards.
@@ -10,6 +17,7 @@ export default function EmailOverlay({
   emailRules, saveEmailRules, newRule, setNewRule, showNewRule, setShowNewRule,
   emailLoading, fetchAndSummarize, emailStatusMsg, emailSummaries,
 }) {
+  const [collapsedSections, setCollapsedSections] = useState({});
   return (
     <div style={{position:"fixed",inset:0,background:"#f5f6fa",zIndex:200,direction:"rtl",display:"flex",flexDirection:"column",fontFamily:"'Heebo',sans-serif"}}>
       <div style={{background:"white",borderBottom:"1px solid #eeeef5",padding:"14px 20px",display:"flex",alignItems:"center",gap:12}}>
@@ -67,7 +75,7 @@ export default function EmailOverlay({
         {/* Rules */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
           <span style={{fontWeight:700,fontSize:14}}>חוקי סיכום</span>
-          <button onClick={()=>{setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false});setShowNewRule(true);}} style={{background:accent,color:"white",border:"none",borderRadius:10,padding:"5px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>+ חוק חדש</button>
+          <button onClick={()=>{setNewRule({sender:"",subject:"",formats:["bullets"],dateFrom:"",dateAll:false});setShowNewRule(true);}} style={{background:accent,color:"white",border:"none",borderRadius:10,padding:"5px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>+ חוק חדש</button>
         </div>
 
         {showNewRule&&(
@@ -98,17 +106,27 @@ export default function EmailOverlay({
                 {!newRule.dateAll&&<input type="date" className="plain-input" style={{flex:1,fontSize:12,padding:"4px 8px",colorScheme:"light"}} value={newRule.dateFrom||""} onChange={e=>setNewRule(p=>({...p,dateFrom:e.target.value}))} placeholder="מתאריך"/>}
               </div>
               {!newRule.dateAll&&!newRule.dateFrom&&<div style={{fontSize:11,color:"#6b6b6b",marginTop:-4}}>בלי תאריך ובלי "כל המיילים" — מחפש רק 30 הימים האחרונים.</div>}
+              <div style={{fontSize:11,color:"#8a8a8a",marginTop:-2}}>אפשר לבחור כמה סוגי סיכום — כל אחד יופיע בנפרד תחת הכותרת שלו</div>
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                {[["bullets","• נקודות"],["summary","📝 סיכום"],["tasks","✅ משימות"],["dates","📅 תאריכים"]].map(([v,l])=>(
-                  <button key={v} onClick={()=>setNewRule(p=>({...p,format:v}))} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${newRule.format===v?accent:"#dde"}`,background:newRule.format===v?`${accent}15`:"white",color:newRule.format===v?accent:"#888",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,fontWeight:newRule.format===v?700:400}}>{l}</button>
-                ))}
+                {FORMAT_OPTIONS.map(([v,l])=>{
+                  const selected = ruleFormats(newRule).includes(v);
+                  return (
+                    <button key={v} onClick={()=>setNewRule(p=>{
+                      const cur = ruleFormats(p);
+                      const next = cur.includes(v) ? cur.filter(x=>x!==v) : [...cur,v];
+                      return {...p, formats: next.length?next:cur}; // keep at least one selected
+                    })} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${selected?accent:"#dde"}`,background:selected?`${accent}15`:"white",color:selected?accent:"#888",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,fontWeight:selected?700:400}}>{l}</button>
+                  );
+                })}
               </div>
               <div style={{display:"flex",gap:8}}>
                 <button className="add-btn" style={{flex:1}} onClick={()=>{
                   if(!newRule.sender&&!newRule.subject)return;
-                  if(newRule.id){ saveEmailRules(emailRules.map(r=>r.id===newRule.id?{...newRule}:r)); }
-                  else{ saveEmailRules([...emailRules,{id:uid(),...newRule}]); }
-                  setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false});
+                  const toSave = {...newRule, formats: ruleFormats(newRule)};
+                  delete toSave.format;
+                  if(newRule.id){ saveEmailRules(emailRules.map(r=>r.id===newRule.id?toSave:r)); }
+                  else{ saveEmailRules([...emailRules,{id:uid(),...toSave}]); }
+                  setNewRule({sender:"",subject:"",formats:["bullets"],dateFrom:"",dateAll:false});
                   setShowNewRule(false);
                 }}>{newRule.id?"עדכן חוק":"שמור חוק"}</button>
               </div>
@@ -122,12 +140,12 @@ export default function EmailOverlay({
               {rule.sender&&<div style={{fontSize:13,fontWeight:600}}>מ: {rule.sender}</div>}
               {rule.subject&&<div style={{fontSize:12,color:"#888"}}>מילות מפתח: {rule.subject} ({rule.searchScope==="all"?"כותרת+תוכן":"כותרת בלבד"})</div>}
               <div style={{fontSize:11,color:accent,marginTop:2}}>
-                {{"bullets":"• נקודות","summary":"סיכום","tasks":"משימות","dates":"תאריכים"}[rule.format]}
+                {ruleFormats(rule).map(f=>FORMAT_LABELS[f]||f).join(" + ")}
                 {" • "}
                 {rule.dateAll?"כל המיילים":rule.dateFrom?`מ-${formatDate(rule.dateFrom)}`:"30 ימים אחרונים"}
               </div>
             </div>
-            <button onClick={()=>{setNewRule({sender:"",subject:"",format:"bullets",dateFrom:"",dateAll:false,...rule});setShowNewRule(true);}} style={{background:"none",border:"none",color:"#8a8a8a",cursor:"pointer",fontSize:15}} aria-label="ערוך חוק">✎</button>
+            <button onClick={()=>{setNewRule({sender:"",subject:"",dateFrom:"",dateAll:false,...rule,formats:ruleFormats(rule)});setShowNewRule(true);}} style={{background:"none",border:"none",color:"#8a8a8a",cursor:"pointer",fontSize:15}} aria-label="ערוך חוק">✎</button>
             <button onClick={()=>saveEmailRules(emailRules.filter(r=>r.id!==rule.id))} style={{background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:16}} aria-label="מחק חוק">✕</button>
           </div>
         ))}
@@ -149,13 +167,34 @@ export default function EmailOverlay({
         )}
 
         {/* Summaries */}
-        {emailSummaries.map((s,i)=>(
-          <div key={s.id||i} style={{background:"white",borderRadius:16,padding:"16px 18px",marginBottom:12,boxShadow:"0 1px 8px rgba(0,0,0,0.07)"}}>
-            <div style={{fontSize:11,color:"#6b6b6b",marginBottom:4}}>{s.sender} • {s.date?new Date(s.date).toLocaleDateString("he-IL",{day:"numeric",month:"short"}):"" }</div>
-            <div style={{fontWeight:700,fontSize:14,marginBottom:10,color:"#1a1a2e"}}>{s.subject}</div>
-            <div style={{fontSize:13,color:"#444",lineHeight:1.7,whiteSpace:"pre-line"}}>{s.summary}</div>
-          </div>
-        ))}
+        {emailSummaries.map((s,i)=>{
+          // Older in-memory summaries (before multi-format support) only have
+          // a single `summary` string — fold that into the same {format:text} shape.
+          const results = s.results || (s.summary ? { [s.format||"summary"]: s.summary } : {});
+          const entries = Object.entries(results);
+          return (
+            <div key={s.id||i} style={{background:"white",borderRadius:16,padding:"16px 18px",marginBottom:12,boxShadow:"0 1px 8px rgba(0,0,0,0.07)"}}>
+              <div style={{fontSize:11,color:"#6b6b6b",marginBottom:4}}>{s.sender} • {s.date?new Date(s.date).toLocaleDateString("he-IL",{day:"numeric",month:"short"}):"" }</div>
+              <div style={{fontWeight:700,fontSize:14,marginBottom:10,color:"#1a1a2e"}}>{s.subject}</div>
+              {entries.map(([fmt,text],idx)=>{
+                const key = `${s.id||i}_${fmt}`;
+                const collapsed = !!collapsedSections[key];
+                return (
+                  <div key={fmt} style={{marginTop:idx>0?10:0,paddingTop:idx>0?10:0,borderTop:idx>0?"1px solid #f0f0f8":"none"}}>
+                    <button
+                      onClick={()=>setCollapsedSections(p=>({...p,[key]:!p[key]}))}
+                      style={{display:"flex",alignItems:"center",gap:6,width:"100%",background:"none",border:"none",cursor:"pointer",padding:0,marginBottom:collapsed?0:6,fontFamily:"'Heebo',sans-serif"}}
+                    >
+                      <span style={{fontSize:12,fontWeight:700,color:accent}}>{FORMAT_LABELS[fmt]||fmt}</span>
+                      <span style={{fontSize:11,color:"#8a8a8a",marginRight:"auto"}}>{collapsed?"▸":"▾"}</span>
+                    </button>
+                    {!collapsed&&<div style={{fontSize:13,color:"#444",lineHeight:1.7,whiteSpace:"pre-line"}}>{text}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
         {emailSummaries.length===0&&!emailLoading&&!emailStatusMsg&&gmailToken&&emailRules.length>0&&(
           <div className="empty-state">לחצי "סכמי מיילים עכשיו" כדי לראות תוצאות</div>
         )}

@@ -117,7 +117,7 @@ export default function App() {
   const [emailLoading,setEmailLoading] = useState(false);
   const [emailStatusMsg,setEmailStatusMsg] = useState("");
   const [showNewRule,setShowNewRule] = useState(false);
-  const [newRule,setNewRule] = useState({sender:"",subject:"",format:"bullets"});
+  const [newRule,setNewRule] = useState({sender:"",subject:"",formats:["bullets"]});
   // A manual override (saved per-browser) always wins; otherwise fall back to
   // the app-wide Client ID baked in at build time, if one was configured.
   const [gmailClientIdOverride,setGmailClientIdOverride] = useState(()=>localStorage.getItem("gmail_client_id")||"");
@@ -526,14 +526,27 @@ export default function App() {
           const rawBody = getBody(msg.payload);
           const body = rawBody.replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
 
-          const sumRes = await fetch(`${WORKER_URL}/summarize-email`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ subject, sender, body: body.slice(0,3000), format: rule.format }),
-          });
-          if (!sumRes.ok) { console.error(`summarize-email failed: ${sumRes.status}`); summarizeFailures++; continue; }
-          const sumData = await sumRes.json();
-          summaries.push({ id: thread.id, subject, sender, date, summary: sumData.result, format: rule.format, ruleId: rule.id });
+          // A rule can request several summary formats at once — each one is
+          // its own AI call (the worker only knows how to produce one format
+          // per request) and they're kept separate so the UI can show each
+          // under its own collapsible heading instead of one merged blob.
+          const formats = rule.formats?.length ? rule.formats : [rule.format || "bullets"];
+          const results = {};
+          for (const fmt of formats) {
+            try {
+              const sumRes = await fetch(`${WORKER_URL}/summarize-email`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ subject, sender, body: body.slice(0,3000), format: fmt }),
+              });
+              if (!sumRes.ok) { console.error(`summarize-email failed (${fmt}): ${sumRes.status}`); summarizeFailures++; continue; }
+              const sumData = await sumRes.json();
+              results[fmt] = sumData.result;
+            } catch (fmtErr) {
+              console.error(`summarize-email error (${fmt})`, fmtErr); summarizeFailures++;
+            }
+          }
+          if (Object.keys(results).length) summaries.push({ id: thread.id, subject, sender, date, results, ruleId: rule.id });
         }
       } catch(e) {
         console.error(e);
