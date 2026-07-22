@@ -6,6 +6,19 @@ import { precacheAndRoute } from "workbox-precaching";
 // generated service worker had no hook for.
 precacheAndRoute(self.__WB_MANIFEST);
 
+// Without these two lines, a newly-deployed service worker installs but sits
+// in "waiting" state until every open tab/PWA instance of the app is fully
+// closed (not just refreshed) — since precacheAndRoute serves the app shell
+// cache-first, that means code changes (like new features) can silently never
+// reach an already-open tab no matter how many times it's reloaded. skipWaiting
+// activates the new worker as soon as it's installed; clientsClaim then lets
+// it immediately start controlling already-open pages instead of waiting for
+// their next navigation.
+self.skipWaiting();
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
 // Fires when the Cloudflare Worker's scheduled job sends a due reminder via
 // the Web Push protocol — shows a real OS-level notification even if the app
 // isn't open. Payload shape is set server-side in worker.js's sendDueReminders.
