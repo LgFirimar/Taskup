@@ -16,7 +16,7 @@ export default function TabContent({
   reminderStart, setReminderStart, reminderEnd, setReminderEnd, reminderAlertDate, setReminderAlertDate,
   allDoneReminders, showDoneReminders, setShowDoneReminders,
   completingId, handleComplete,
-  editId, setEditId, editText, setEditText, editAlertDate, setEditAlertDate, editStartDate, setEditStartDate, editEndDate, setEditEndDate, saveEdit,
+  editId, setEditId, editText, setEditText, editAlertDate, setEditAlertDate, editStartDate, setEditStartDate, editEndDate, setEditEndDate, editDueDate, setEditDueDate, saveEdit,
   cyclePriority, handleBigComplete,
   breakingDownId, breakdownTaskDirect, breakdownTask, pendingBreakdown, setPendingBreakdown, confirmBreakdown,
   expandedTaskId, setExpandedTaskId, subtaskInput, setSubtaskInput, addSubtask, toggleSubtask, deleteSubtask,
@@ -34,8 +34,29 @@ export default function TabContent({
 
           <div style={{flex:1,minWidth:0}}>
             {editId===item.id
-              ?<input autoFocus className="edit-inline" value={editText} onChange={e=>setEditText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")saveEdit("task",item.id);if(e.key==="Escape")setEditId(null);}}/>
-              :<span style={{fontSize:14,lineHeight:1.55,color:"#222"}}>{item.text}</span>}
+              ?<div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  <input autoFocus className="edit-inline" value={editText} onChange={e=>setEditText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")saveEdit("task",item.id);if(e.key==="Escape"){setEditId(null);setEditDueDate("");}}}/>
+                  <div style={{display:"flex",alignItems:"center",gap:6,background:"#f9f9f8",border:"1px solid #ebebea",borderRadius:8,padding:"6px 10px"}}>
+                    <span style={{fontSize:11,color:"#888",fontWeight:600,whiteSpace:"nowrap"}}>📅 תאריך יעד (רשות)</span>
+                    <input type="date" className="edit-inline" style={{fontSize:12,padding:"3px 8px",flex:1,colorScheme:"light"}} value={editDueDate} onChange={e=>setEditDueDate(e.target.value)}/>
+                    {editDueDate&&<button onClick={()=>setEditDueDate("")} aria-label="נקה תאריך יעד" style={{background:"none",border:"none",color:"#aaa",cursor:"pointer",fontSize:13,padding:0,flexShrink:0}}>✕</button>}
+                    <button onClick={()=>saveEdit("task",item.id)} style={{background:accent,color:"white",border:"none",borderRadius:6,padding:"4px 10px",fontSize:12,cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontWeight:600,flexShrink:0}}>שמור</button>
+                  </div>
+                </div>
+              :<>
+                <span style={{fontSize:14,lineHeight:1.55,color:"#222"}}>{item.text}</span>
+                {item.dueDate&&(()=>{
+                  const days=getDaysUntil(item.dueDate);
+                  const overdue=days<0;
+                  const color=overdue?"#e05a4e":days<=2?"#c98a2e":"#6b6b6b";
+                  return (
+                    <div style={{marginTop:4,display:"flex",alignItems:"center",gap:6}}>
+                      <span className="date-chip" style={{background:overdue?"#fdecea":"#f0f0ef",color}}>📅 {formatDate(item.dueDate)}</span>
+                      <span style={{fontSize:11,color,fontWeight:600}}>{overdue?`באיחור ${Math.abs(days)} ימים`:days===0?"היום":`בעוד ${days} ימים`}</span>
+                    </div>
+                  );
+                })()}
+              </>}
           </div>
 
           <div style={{display:"flex",alignItems:"center",flexShrink:0,gap:2}}>
@@ -58,7 +79,7 @@ export default function TabContent({
               style={{background:"none",border:"none",cursor:"pointer",padding:"3px 5px",borderRadius:8,fontSize:13,fontWeight:700,color:hasPending?"#b45309":"#c8b090",letterSpacing:-1,minWidth:28,minHeight:28,display:"flex",alignItems:"center",justifyContent:"center"}}>
               {breakingDownId===item.id&&hasPending?<div className="spinner" style={{borderTopColor:"#b45309",borderColor:"#b4530933",width:12,height:12}}/>:"✦✦"}
             </button>
-            <button className="icon-btn" style={{fontSize:17}} aria-label="ערוך משימה" onClick={()=>{setEditId(item.id);setEditText(item.text);}}>✎</button>
+            <button className="icon-btn" style={{fontSize:17}} aria-label="ערוך משימה" onClick={()=>{setEditId(item.id);setEditText(item.text);setEditDueDate(item.dueDate||"");}}>✎</button>
             <button className="icon-btn del" aria-label="מחק משימה" onClick={()=>deleteItem("task",item.id)}>✕</button>
           </div>
         </div>

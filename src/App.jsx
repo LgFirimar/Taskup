@@ -64,6 +64,7 @@ export default function App() {
   const [editAlertDate,setEditAlertDate] = useState("");
   const [editStartDate,setEditStartDate] = useState("");
   const [editEndDate,setEditEndDate] = useState("");
+  const [editDueDate,setEditDueDate] = useState(""); // optional due date, tasks only
 
   // ── Search ─────────────────────────────────────────────────────────────────
   const [searchQuery,setSearchQuery] = useState("");
@@ -818,7 +819,7 @@ export default function App() {
   };
 
   // ── Tasks & reminders ─────────────────────────────────────────────────────
-  const addTask = ()=>{ const text=taskInput.trim(); if(!text)return; updateCtx(c=>({...c,tasks:[...c.tasks,{id:uid(),text,done:false,createdAt:today(),subtasks:[],priority:null}]})); setTaskInput(""); };
+  const addTask = ()=>{ const text=taskInput.trim(); if(!text)return; updateCtx(c=>({...c,tasks:[...c.tasks,{id:uid(),text,done:false,createdAt:today(),subtasks:[],priority:null,dueDate:null}]})); setTaskInput(""); };
   const addReminder = ()=>{
     const text=reminderInput.trim(); if(!text)return;
     updateCtx(c=>({...c,reminders:[...c.reminders,{id:uid(),text,done:false,createdAt:today(),startDate:reminderStart||null,endDate:reminderEnd||null,alertDate:reminderAlertDate||null}]}));
@@ -864,8 +865,11 @@ export default function App() {
     setLastDeleted(null);
   };
   const saveEdit = (type,id)=>{
-    smartUpdateItem(type,id,i=>({...i,text:editText,...(type==="reminder"?{alertDate:editAlertDate||null,startDate:editStartDate||null,endDate:editEndDate||null}:{})}));
-    setEditId(null); setEditText(""); setEditAlertDate(""); setEditStartDate(""); setEditEndDate("");
+    smartUpdateItem(type,id,i=>({...i,text:editText,
+      ...(type==="reminder"?{alertDate:editAlertDate||null,startDate:editStartDate||null,endDate:editEndDate||null}:{}),
+      ...(type==="task"?{dueDate:editDueDate||null}:{}),
+    }));
+    setEditId(null); setEditText(""); setEditAlertDate(""); setEditStartDate(""); setEditEndDate(""); setEditDueDate("");
   };
   const cyclePriority = (id)=>smartUpdateItem("task",id,t=>({...t,priority:PRIO_CYCLE[(PRIO_CYCLE.indexOf(t.priority||null)+1)%4]}));
 
@@ -1117,7 +1121,7 @@ export default function App() {
           reminderStart={reminderStart} setReminderStart={setReminderStart} reminderEnd={reminderEnd} setReminderEnd={setReminderEnd} reminderAlertDate={reminderAlertDate} setReminderAlertDate={setReminderAlertDate}
           allDoneReminders={allDoneReminders} showDoneReminders={showDoneReminders} setShowDoneReminders={setShowDoneReminders}
           completingId={completingId} handleComplete={handleComplete}
-          editId={editId} setEditId={setEditId} editText={editText} setEditText={setEditText} editAlertDate={editAlertDate} setEditAlertDate={setEditAlertDate} editStartDate={editStartDate} setEditStartDate={setEditStartDate} editEndDate={editEndDate} setEditEndDate={setEditEndDate} saveEdit={saveEdit}
+          editId={editId} setEditId={setEditId} editText={editText} setEditText={setEditText} editAlertDate={editAlertDate} setEditAlertDate={setEditAlertDate} editStartDate={editStartDate} setEditStartDate={setEditStartDate} editEndDate={editEndDate} setEditEndDate={setEditEndDate} editDueDate={editDueDate} setEditDueDate={setEditDueDate} saveEdit={saveEdit}
           cyclePriority={cyclePriority} handleBigComplete={handleBigComplete}
           breakingDownId={breakingDownId} breakdownTaskDirect={breakdownTaskDirect} breakdownTask={breakdownTask} pendingBreakdown={pendingBreakdown} setPendingBreakdown={setPendingBreakdown} confirmBreakdown={confirmBreakdown}
           expandedTaskId={expandedTaskId} setExpandedTaskId={setExpandedTaskId} subtaskInput={subtaskInput} setSubtaskInput={setSubtaskInput} addSubtask={addSubtask} toggleSubtask={toggleSubtask} deleteSubtask={deleteSubtask}
