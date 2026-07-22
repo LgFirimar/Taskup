@@ -94,7 +94,14 @@ export default function ProjectImportModal({ projectId, projectName, accent, app
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error(`parse failed: ${res.status}`);
+      if (!res.ok) {
+        // Surface the server's actual Hebrew error message when it sent one
+        // (e.g. "the document was too long/complex"), instead of always
+        // falling back to the generic message below — makes it possible to
+        // tell what actually went wrong from a screenshot.
+        const serverMessage = await res.json().then(d => d?.error).catch(() => null);
+        throw Object.assign(new Error(serverMessage || `parse failed: ${res.status}`), { isServerMessage: !!serverMessage });
+      }
       const data = await res.json();
       const isEmpty = !(data.tasks?.length || data.timeline?.length || data.brainstorm?.length || data.board?.length);
       if (isEmpty) {
@@ -107,7 +114,10 @@ export default function ProjectImportModal({ projectId, projectName, accent, app
       setPhase("preview");
     } catch (err) {
       console.error("project file import failed", err);
-      setError("הפירוק נכשל. נסי שוב בעוד רגע, או עם קובץ אחר.");
+      // If the server sent back a specific Hebrew reason (e.g. the document
+      // was too long/complex for the AI to parse), show that instead of the
+      // generic fallback — makes future issues diagnosable from a screenshot.
+      setError(err?.isServerMessage ? err.message : "הפירוק נכשל. נסי שוב בעוד רגע, או עם קובץ אחר.");
       setPhase("idle");
     }
   };

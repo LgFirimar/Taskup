@@ -174,7 +174,9 @@ function projectImportPrompt(todayStr, inlineText) {
 חשוב מאוד:
 - החזירי אך ורק אובייקט JSON תקין, בלי שום טקסט נוסף לפניו או אחריו, ובלי code fences של markdown.
 - מבנה מדויק (כולל כל המפתחות, גם אם המערך ריק): {"tasks":[{"text":"...","subtasks":["..."]}],"timeline":[{"text":"...","date":"YYYY-MM-DD"}],"brainstorm":["..."],"board":["..."]}
-- אל תמציאי תוכן שלא מופיע במקור — אם קטגוריה מסוימת ריקה, החזירי עבורה מערך ריק.`;
+- אל תמציאי תוכן שלא מופיע במקור — אם קטגוריה מסוימת ריקה, החזירי עבורה מערך ריק.
+- אם המסמך ארוך ומפורט (למשל מסמך רב-ימי): אל תנסי לתעד כל פרט. בחרי לכל היותר את 15 הפריטים הכי חשובים בכל קטגוריה, ושמרי כל טקסט קצר (עד כ-15 מילים). זה קריטי כדי שהתשובה לא תיחתך — עדיף פחות פריטים ומדויקים מתשובה ארוכה שנקטעת.
+- תת-משימות: עד 5 לכל משימה, כל אחת קצרה.`;
   return inlineText ? `${instructions}\n\nתוכן הקובץ:\n${inlineText.slice(0, 8000)}` : instructions;
 }
 
@@ -337,13 +339,22 @@ export default {
           prompt = projectImportPrompt(todayStr, text);
         }
 
-        const raw = await callClaude(env, { maxTokens: 2000, prompt });
+        let raw = await callClaude(env, { maxTokens: 4096, prompt });
         let parsed;
         try {
           parsed = parseProjectImportResponse(raw);
-        } catch (err) {
-          console.error("parse-project-file: failed to parse Claude response", err.message, raw.slice(0, 300));
-          return new Response(JSON.stringify({ error: "לא הצלחתי לפרק את הקובץ הזה. נסי שוב או עם קובץ אחר." }), { status: 502, headers: { ...headers, "content-type": "application/json" } });
+        } catch (firstErr) {
+          // Malformed/truncated JSON is usually a one-off model hiccup (or a
+          // response that got cut off) — retry once before giving up, same
+          // pattern as /summarize-email's empty-result retry.
+          console.error("parse-project-file: failed to parse Claude response, retrying once", firstErr.message, raw.slice(0, 300));
+          try {
+            raw = await callClaude(env, { maxTokens: 4096, prompt });
+            parsed = parseProjectImportResponse(raw);
+          } catch (secondErr) {
+            console.error("parse-project-file: retry also failed to parse Claude response", secondErr.message, raw.slice(0, 300));
+            return new Response(JSON.stringify({ error: "לא הצלחתי לפרק את הקובץ הזה — כנראה שהוא ארוך או מורכב מדי כרגע. נסי שוב בעוד רגע, או עם קובץ קצר יותר." }), { status: 502, headers: { ...headers, "content-type": "application/json" } });
+          }
         }
         return new Response(JSON.stringify(parsed), { headers: { ...headers, "content-type": "application/json" } });
       }
