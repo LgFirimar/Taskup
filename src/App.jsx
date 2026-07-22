@@ -10,6 +10,7 @@ import EmailOverlay from "./components/EmailOverlay";
 import EmailSummariesOverview from "./components/EmailSummariesOverview";
 import EmailRuleDetail from "./components/EmailRuleDetail";
 import EmailFolderView from "./components/EmailFolderView";
+import EmailInstructionsLog from "./components/EmailInstructionsLog";
 import ProjectsOverlay from "./components/ProjectsOverlay";
 import VoiceHelpModal from "./components/VoiceHelpModal";
 import SidePills from "./components/SidePills";
@@ -24,7 +25,7 @@ import { useVoiceCommands } from "./hooks/useVoiceCommands";
 import { usePushNotifications } from "./hooks/usePushNotifications";
 import {
   uid, STORAGE_KEY, WORKER_URL, PRIO_CYCLE, TAB_COLORS, DEFAULT_GMAIL_CLIENT_ID,
-  today, getReminderStatus, loadStorage, computeInitialAlerts,
+  today, getReminderStatus, loadStorage, computeInitialAlerts, buildGmailSearchQuery,
 } from "./utils";
 
 export default function App() {
@@ -143,6 +144,16 @@ export default function App() {
   const [archiveErrorMsg,setArchiveErrorMsg] = useState("");
   const [ruleSyncingId,setRuleSyncingId] = useState(null); // rule id currently being individually re-synced
 
+  // "הוראות" — lightweight rules that ONLY sort-to-folder or trash matching
+  // mail (no AI summarization, no done/pending triage). Kept as a fully
+  // separate list from the summarization rules above, with its own
+  // processed-mail log rather than a per-rule browsing page — there's no
+  // AI content to review, just a record of what happened.
+  const [emailInstructions,setEmailInstructions] = useState(()=>{ try{return JSON.parse(localStorage.getItem("email_instructions"))||[];}catch{return[];} });
+  const [emailInstructionLog,setEmailInstructionLog] = useState(()=>{ try{return JSON.parse(localStorage.getItem("email_instruction_log"))||[];}catch{return[];} });
+  const [showNewInstruction,setShowNewInstruction] = useState(false);
+  const [newInstruction,setNewInstruction] = useState({sender:"",subject:"",action:"folder"});
+
   // ── Email sub-pages (מיילים מסוכמים) ──────────────────────────────────────
   // These are separate full-screen "pages" reached from the email home overlay.
   // Navigation is flat (not a stack): every sub-page has exactly two nav
@@ -154,6 +165,7 @@ export default function App() {
   const [folderMessages,setFolderMessages] = useState([]);
   const [folderLoading,setFolderLoading] = useState(false);
   const [folderError,setFolderError] = useState("");
+  const [showInstructionsLog,setShowInstructionsLog] = useState(false); // "הוראות" processed-mail log
 
   // Every one of these is written to be fully exclusive — it turns off every
   // OTHER email sub-page flag, not just turns on its own. Two of these
@@ -161,13 +173,14 @@ export default function App() {
   // glitch: each runs its own useFocusTrap, and two active traps fight over
   // focus (each pulling it back into its own container), which recurses
   // synchronously forever. Keep these as the only place that touches these
-  // flags — never toggle showEmail/showEmailOverview/openRuleId/showRuleFolder
-  // directly from a component.
-  const openEmailOverview = () => { setShowEmail(false); setShowEmailOverview(true); setOpenRuleId(null); setShowRuleFolder(false); };
-  const goEmailAppHome = () => { setShowEmail(false); setShowEmailOverview(false); setOpenRuleId(null); setShowRuleFolder(false); };
-  const goEmailHome = () => { setShowEmailOverview(false); setOpenRuleId(null); setShowRuleFolder(false); setShowEmail(true); };
-  const openRuleDetail = (ruleId) => { setShowEmail(false); setShowEmailOverview(false); setOpenRuleId(ruleId); setShowRuleFolder(false); };
+  // flags — never toggle showEmail/showEmailOverview/openRuleId/showRuleFolder/
+  // showInstructionsLog directly from a component.
+  const openEmailOverview = () => { setShowEmail(false); setShowEmailOverview(true); setOpenRuleId(null); setShowRuleFolder(false); setShowInstructionsLog(false); };
+  const goEmailAppHome = () => { setShowEmail(false); setShowEmailOverview(false); setOpenRuleId(null); setShowRuleFolder(false); setShowInstructionsLog(false); };
+  const goEmailHome = () => { setShowEmailOverview(false); setOpenRuleId(null); setShowRuleFolder(false); setShowInstructionsLog(false); setShowEmail(true); };
+  const openRuleDetail = (ruleId) => { setShowEmail(false); setShowEmailOverview(false); setOpenRuleId(ruleId); setShowRuleFolder(false); setShowInstructionsLog(false); };
   const closeRuleDetail = () => { setOpenRuleId(null); setShowRuleFolder(false); setShowEmail(false); setShowEmailOverview(true); };
+  const openInstructionsLog = () => { setShowEmail(false); setShowEmailOverview(false); setOpenRuleId(null); setShowRuleFolder(false); setShowInstructionsLog(true); };
 
   // ── Cloud backup (Google Drive) ───────────────────────────────────────────
   // Reuses the same Google Client ID as the Gmail feature (a Client ID isn't
@@ -224,6 +237,14 @@ export default function App() {
   useEffect(()=>{
     localStorage.setItem("email_summaries",JSON.stringify(emailSummaries));
   },[emailSummaries]);
+
+  useEffect(()=>{
+    localStorage.setItem("email_instructions",JSON.stringify(emailInstructions));
+  },[emailInstructions]);
+
+  useEffect(()=>{
+    localStorage.setItem("email_instruction_log",JSON.stringify(emailInstructionLog));
+  },[emailInstructionLog]);
 
   useEffect(()=>{
     const h=(e)=>{
@@ -457,6 +478,7 @@ export default function App() {
 
   // ── Email functions ────────────────────────────────────────────────────────
   const saveEmailRules = (rules) => { setEmailRules(rules); localStorage.setItem("email_rules", JSON.stringify(rules)); };
+  const saveEmailInstructions = (list) => { setEmailInstructions(list); localStorage.setItem("email_instructions", JSON.stringify(list)); };
 
   const connectGmail = () => {
     const clientId = gmailClientId.trim();
@@ -555,43 +577,55 @@ export default function App() {
     }
   };
 
-  // Ensures a rule's target label actually exists in Gmail, creating it on first
-  // use if it was set up as a "new label" choice. Self-heals on a 409 (name
-  // already taken — e.g. created directly in Gmail since) by looking it up
-  // instead of failing. Persists the resolved id onto the rule so this only
-  // has to happen once.
-  const ensureRuleLabel = async (rule) => {
-    if (rule.archiveLabelId) return rule.archiveLabelId;
-    if (!rule.archiveLabelName || !rule.archiveLabelName.trim()) return null;
+  // Creates a Gmail label by name if it doesn't already exist, self-healing
+  // on a 409 (name already taken — e.g. created directly in Gmail since, or
+  // by another rule/instruction) by looking it up instead of failing. Pure
+  // Gmail-side resolution — doesn't touch any rule/instruction state itself;
+  // callers persist the resolved id onto whichever list they own.
+  const resolveOrCreateLabel = async (name) => {
     try {
       const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/labels", {
         method: "POST",
         headers: { Authorization: `Bearer ${gmailToken}`, "content-type": "application/json" },
-        body: JSON.stringify({ name: rule.archiveLabelName.trim(), labelListVisibility: "labelShow", messageListVisibility: "show" }),
+        body: JSON.stringify({ name, labelListVisibility: "labelShow", messageListVisibility: "show" }),
       });
       if (res.ok) {
         const created = await res.json();
         setGmailLabels(prev => [...prev, created].sort((a,b) => a.name.localeCompare(b.name, "he")));
-        setEmailRules(prev => { const next = prev.map(r => r.id === rule.id ? { ...r, archiveLabelId: created.id } : r); localStorage.setItem("email_rules", JSON.stringify(next)); return next; });
         return created.id;
       }
       if (res.status === 409) {
         const listRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/labels", { headers: { Authorization: `Bearer ${gmailToken}` } });
         const listData = await listRes.json().catch(() => ({}));
-        const existing = (listData.labels || []).find(l => l.name === rule.archiveLabelName.trim());
-        if (existing) {
-          setEmailRules(prev => { const next = prev.map(r => r.id === rule.id ? { ...r, archiveLabelId: existing.id } : r); localStorage.setItem("email_rules", JSON.stringify(next)); return next; });
-          return existing.id;
-        }
-        return null;
+        return (listData.labels || []).find(l => l.name === name)?.id || null;
       }
       if (res.status === 401) { disconnectGmail("החיבור לחשבון Gmail פג תוקף — התחברי מחדש."); return null; }
       if (res.status === 403) { setArchiveErrorMsg("אין הרשאה ליצור תיקיות ב-Gmail — התנתקי והתחברי מחדש כדי לאשר הרשאת עריכה (לא רק קריאה)."); return null; }
       return null;
     } catch (e) {
-      console.error("ensureRuleLabel failed", e);
+      console.error("resolveOrCreateLabel failed", e);
       return null;
     }
+  };
+
+  // Ensures a summary rule's target label actually exists in Gmail, creating
+  // it on first use if it was set up as a "new label" choice. Persists the
+  // resolved id onto the rule so this only has to happen once.
+  const ensureRuleLabel = async (rule) => {
+    if (rule.archiveLabelId) return rule.archiveLabelId;
+    if (!rule.archiveLabelName || !rule.archiveLabelName.trim()) return null;
+    const id = await resolveOrCreateLabel(rule.archiveLabelName.trim());
+    if (id) setEmailRules(prev => { const next = prev.map(r => r.id === rule.id ? { ...r, archiveLabelId: id } : r); localStorage.setItem("email_rules", JSON.stringify(next)); return next; });
+    return id;
+  };
+
+  // Same idea for a "הוראה" instruction's target label.
+  const ensureInstructionLabel = async (instruction) => {
+    if (instruction.labelId) return instruction.labelId;
+    if (!instruction.labelName || !instruction.labelName.trim()) return null;
+    const id = await resolveOrCreateLabel(instruction.labelName.trim());
+    if (id) setEmailInstructions(prev => { const next = prev.map(r => r.id === instruction.id ? { ...r, labelId: id } : r); localStorage.setItem("email_instructions", JSON.stringify(next)); return next; });
+    return id;
   };
 
   // Moves an entire Gmail thread out of the inbox and files it under a label —
@@ -609,6 +643,25 @@ export default function App() {
       return res.ok;
     } catch (e) {
       console.error("archiveThreadToLabel failed", e);
+      return false;
+    }
+  };
+
+  // Moves a thread to Gmail's Trash (NOT permanent deletion — trash.messages
+  // are recoverable there for ~30 days, same as deleting an email by hand in
+  // Gmail itself). gmail.modify explicitly allows this without needing any
+  // extra scope.
+  const trashThread = async (threadId) => {
+    try {
+      const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}/trash`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${gmailToken}` },
+      });
+      if (res.status === 401) { disconnectGmail("החיבור לחשבון Gmail פג תוקף — התחברי מחדש."); return false; }
+      if (res.status === 403) { setArchiveErrorMsg("אין הרשאה למחוק מיילים ב-Gmail — התנתקי והתחברי מחדש כדי לאשר הרשאת עריכה (לא רק קריאה)."); return false; }
+      return res.ok;
+    } catch (e) {
+      console.error("trashThread failed", e);
       return false;
     }
   };
@@ -687,27 +740,7 @@ export default function App() {
     let authExpired = false;
     let debugLine = "";
     try {
-      // Build Gmail search query. Note: no "in:inbox" restriction — Gmail's
-      // default search already excludes Spam/Trash, but still matches mail
-      // that's been archived out of the inbox (a very common case).
-      let q = "";
-      if (rule.dateAll) { /* no date filter */ }
-      else if (rule.dateFrom) { q += `after:${rule.dateFrom.replace(/-/g,"/")} `; }
-      else { q += "newer_than:30d "; }
-      if (rule.sender) {
-        // Quote multi-word senders (e.g. a display name) — otherwise Gmail
-        // treats "from:יוסי כהן" as from:יוסי AND a separate required word
-        // "כהן" anywhere in the email, which usually matches nothing.
-        const senderTerm = rule.sender.includes(" ") ? `"${rule.sender}"` : rule.sender;
-        q += `from:${senderTerm} `;
-      }
-      if (rule.subject) {
-        // Quote multi-word terms so Gmail matches the phrase, not each word separately.
-        const term = rule.subject.includes(" ") ? `"${rule.subject}"` : rule.subject;
-        // scope "all" = also search the email body, not just the subject line.
-        q += rule.searchScope === "all" ? `${term} ` : `subject:${term} `;
-      }
-      q = q.trim();
+      const q = buildGmailSearchQuery(rule);
 
       const searchRes = await fetch(
         `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=5`,
@@ -808,10 +841,68 @@ export default function App() {
     return { newEntries, threadsFoundCount, failures, debugLine, authExpired };
   };
 
-  const fetchAndSummarize = async () => {
-    if (!gmailToken || emailRules.length === 0) return;
+  // Does the actual search+trash/sort work for ONE "הוראה" — mirrors
+  // runRuleSync but with no AI summarization at all: matching NEW threads
+  // (per existingKeys, same skip-if-already-processed pattern) just get the
+  // configured action applied and logged.
+  const runInstructionSync = async (instruction, existingKeys) => {
+    const newLogEntries = [];
+    let failures = 0;
+    let authExpired = false;
+    let debugLine = "";
+    const label = [instruction.sender&&`מ: ${instruction.sender}`, instruction.subject&&`מילים: ${instruction.subject}`].filter(Boolean).join(" | ") || "(הוראה ללא תנאים)";
+    try {
+      const q = buildGmailSearchQuery(instruction);
+      const searchRes = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=10`,
+        { headers: { Authorization: `Bearer ${gmailToken}` } }
+      );
+      if (searchRes.status === 401) {
+        disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי שוב.");
+        return { newLogEntries, failures, debugLine, authExpired: true };
+      }
+      if (!searchRes.ok) throw new Error(`Gmail search failed: ${searchRes.status}`);
+      const searchData = await searchRes.json();
+      const threads = searchData.threads || [];
+      const freshThreads = threads.filter(t => !existingKeys.has(`${instruction.id}:${t.id}`));
+      debugLine = `${label} → "${q}" → ${threads.length} תוצאות, ${freshThreads.length} חדשות`;
+
+      let labelId = null;
+      if (instruction.action === "folder") {
+        labelId = instruction.labelId || (instruction.labelName ? await ensureInstructionLabel(instruction) : null);
+      }
+
+      for (const thread of freshThreads) {
+        // Need Subject/From/Date for the log entry — a lightweight metadata
+        // fetch, not the full message body (no summarization happening here).
+        const mRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, { headers: { Authorization: `Bearer ${gmailToken}` } });
+        if (!mRes.ok) { failures++; continue; }
+        const mData = await mRes.json();
+        const headers = mData.messages?.[0]?.payload?.headers || [];
+        const subject = headers.find(h=>h.name==="Subject")?.value || "(ללא נושא)";
+        const sender = headers.find(h=>h.name==="From")?.value || "";
+        const date = headers.find(h=>h.name==="Date")?.value || "";
+
+        const ok = instruction.action === "delete"
+          ? await trashThread(thread.id)
+          : (labelId ? await archiveThreadToLabel(thread.id, labelId) : false);
+        if (!ok) { failures++; continue; }
+        newLogEntries.push({ id: thread.id, instructionId: instruction.id, subject, sender, date, action: instruction.action, labelName: instruction.labelName || gmailLabels.find(l=>l.id===instruction.labelId)?.name || null });
+      }
+    } catch (e) {
+      console.error(e);
+      failures++;
+      debugLine = `${label} → שגיאה: ${e.message}`;
+    }
+    return { newLogEntries, failures, debugLine, authExpired };
+  };
+
+  const syncEmail = async () => {
+    if (!gmailToken || (emailRules.length === 0 && emailInstructions.length === 0)) return;
     setEmailLoading(true);
     setEmailStatusMsg("");
+    let authExpired = false;
+
     const existingKeys = new Set(emailSummaries.map(s => `${s.ruleId}:${s.id}`));
     const allNew = [];
     let threadsFound = 0;
@@ -819,7 +910,7 @@ export default function App() {
     const ruleDebug = [];
     for (const rule of emailRules) {
       const result = await runRuleSync(rule, existingKeys);
-      if (result.authExpired) { setEmailLoading(false); return; }
+      if (result.authExpired) { authExpired = true; break; }
       threadsFound += result.threadsFoundCount;
       summarizeFailures += result.failures;
       if (result.debugLine) ruleDebug.push(result.debugLine);
@@ -827,17 +918,36 @@ export default function App() {
       allNew.push(...result.newEntries);
     }
     if (allNew.length) setEmailSummaries(prev => [...prev, ...allNew]);
-    if (allNew.length === 0) {
-      if (threadsFound === 0) {
-        setEmailStatusMsg(
-          "לא נמצאו מיילים תואמים לחוקים. בדקי שהשולח/הנושא מדויקים, או סמני \"כל המיילים\" בעריכת החוק — כברירת מחדל מחפשים רק 30 ימים אחורה.\n\nפירוט לפי חוק:\n"
-          + ruleDebug.map(d=>`• ${d}`).join("\n")
-        );
-      } else if (summarizeFailures > 0) {
-        setEmailStatusMsg("נמצאו מיילים תואמים, אבל הסיכום נכשל. נסי שוב בעוד רגע — אם זה ממשיך לקרות ייתכן שיש בעיה בשרת הסיכום.");
-      } else {
-        setEmailStatusMsg("נמצאו מיילים תואמים, אבל כבר נסרקו קודם — אין חדש. אפשר לראות אותם ב\"מיילים מסוכמים\".");
+
+    let instructionsProcessed = 0;
+    if (!authExpired) {
+      const existingInstructionKeys = new Set(emailInstructionLog.map(e => `${e.instructionId}:${e.id}`));
+      const allNewLog = [];
+      for (const instruction of emailInstructions) {
+        const result = await runInstructionSync(instruction, existingInstructionKeys);
+        if (result.authExpired) { authExpired = true; break; }
+        result.newLogEntries.forEach(e => existingInstructionKeys.add(`${e.instructionId}:${e.id}`));
+        allNewLog.push(...result.newLogEntries);
       }
+      if (allNewLog.length) { setEmailInstructionLog(prev => [...allNewLog, ...prev]); instructionsProcessed = allNewLog.length; }
+    }
+
+    if (!authExpired) {
+      let msg = "";
+      if (emailRules.length > 0 && allNew.length === 0) {
+        if (threadsFound === 0) {
+          msg = "לא נמצאו מיילים תואמים לחוקים. בדקי שהשולח/הנושא מדויקים, או סמני \"כל המיילים\" בעריכת החוק — כברירת מחדל מחפשים רק 30 ימים אחורה.\n\nפירוט לפי חוק:\n"
+            + ruleDebug.map(d=>`• ${d}`).join("\n");
+        } else if (summarizeFailures > 0) {
+          msg = "נמצאו מיילים תואמים, אבל הסיכום נכשל. נסי שוב בעוד רגע — אם זה ממשיך לקרות ייתכן שיש בעיה בשרת הסיכום.";
+        } else {
+          msg = "נמצאו מיילים תואמים, אבל כבר נסרקו קודם — אין חדש. אפשר לראות אותם ב\"מיילים מסוכמים\".";
+        }
+      }
+      if (instructionsProcessed > 0) {
+        msg = (msg ? msg + "\n\n" : "") + `בנוסף: ${instructionsProcessed} מיילים טופלו לפי ההוראות. אפשר לראות אותם ב"הוראות".`;
+      }
+      if (msg) setEmailStatusMsg(msg);
     }
     setEmailLoading(false);
   };
@@ -1317,10 +1427,15 @@ export default function App() {
             gmailClientId={gmailClientId} setGmailClientId={setGmailClientId} showClientIdInput={showClientIdInput} setShowClientIdInput={setShowClientIdInput} editGmailClientId={editGmailClientId}
             gmailToken={gmailToken} connectGmail={connectGmail} disconnectGmail={disconnectGmail} gmailAuthError={gmailAuthError} setGmailAuthError={setGmailAuthError}
             emailRules={emailRules} saveEmailRules={saveEmailRules} newRule={newRule} setNewRule={setNewRule} showNewRule={showNewRule} setShowNewRule={setShowNewRule}
-            emailLoading={emailLoading} fetchAndSummarize={fetchAndSummarize} emailStatusMsg={emailStatusMsg}
+            emailLoading={emailLoading} fetchAndSummarize={syncEmail} emailStatusMsg={emailStatusMsg}
             gmailLabels={gmailLabels} labelsLoading={labelsLoading} labelsError={labelsError} fetchGmailLabels={fetchGmailLabels} ensureRuleLabel={ensureRuleLabel}
             archiveErrorMsg={archiveErrorMsg} setArchiveErrorMsg={setArchiveErrorMsg}
             onOpenOverview={openEmailOverview}
+            emailInstructions={emailInstructions} saveEmailInstructions={saveEmailInstructions}
+            newInstruction={newInstruction} setNewInstruction={setNewInstruction}
+            showNewInstruction={showNewInstruction} setShowNewInstruction={setShowNewInstruction}
+            ensureInstructionLabel={ensureInstructionLabel}
+            onOpenInstructionsLog={openInstructionsLog}
           />
         )}
 
@@ -1373,6 +1488,16 @@ export default function App() {
             />
           );
         })()}
+
+        {/* Email overlay — "הוראות" processed-mail log (sort/delete only, no AI) */}
+        {showInstructionsLog&&(
+          <EmailInstructionsLog
+            accent={accent}
+            emailInstructionLog={emailInstructionLog}
+            onBackToEmailHome={goEmailHome}
+            onAppHome={goEmailAppHome}
+          />
+        )}
 
         {/* Cloud backup overlay */}
         {showCloudBackup&&(

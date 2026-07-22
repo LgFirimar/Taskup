@@ -87,6 +87,38 @@ export const EMAIL_FORMAT_LABELS = Object.fromEntries(EMAIL_FORMAT_OPTIONS);
 // string — this reads either shape back as an array so old rules keep working.
 export const ruleFormats = (rule) => (rule?.formats?.length ? rule.formats : [rule?.format || "bullets"]);
 
+// Builds a Gmail search query string from a rule/instruction's matching
+// fields (sender/keywords/date range) — shared between summarization rules
+// and "הוראות" instructions, since both match mail the same way. Note: no
+// "in:inbox" restriction — Gmail's default search already excludes
+// Spam/Trash, but still matches mail that's been archived out of the inbox
+// (a very common case once rules start moving things around).
+export const buildGmailSearchQuery = (ruleLike) => {
+  let q = "";
+  if (ruleLike.dateAll) { /* no date filter */ }
+  else if (ruleLike.dateFrom) { q += `after:${ruleLike.dateFrom.replace(/-/g,"/")} `; }
+  else { q += "newer_than:30d "; }
+  if (ruleLike.sender) {
+    // Quote multi-word senders (e.g. a display name) — otherwise Gmail
+    // treats "from:יוסי כהן" as from:יוסי AND a separate required word
+    // "כהן" anywhere in the email, which usually matches nothing.
+    const senderTerm = ruleLike.sender.includes(" ") ? `"${ruleLike.sender}"` : ruleLike.sender;
+    q += `from:${senderTerm} `;
+  }
+  if (ruleLike.subject) {
+    // Quote multi-word terms so Gmail matches the phrase, not each word separately.
+    const term = ruleLike.subject.includes(" ") ? `"${ruleLike.subject}"` : ruleLike.subject;
+    // scope "all" = also search the email body, not just the subject line.
+    q += ruleLike.searchScope === "all" ? `${term} ` : `subject:${term} `;
+  }
+  return q.trim();
+};
+
+// "הוראות" — lightweight rules that ONLY sort-to-folder or trash matching
+// mail, with no AI summarization involved. Distinct from the summarization
+// rules above (see EMAIL_FORMAT_OPTIONS) and from their own log page.
+export const EMAIL_INSTRUCTION_ACTION_LABELS = { folder: "📁 מיון לתיקייה", delete: "🗑️ מחיקה (לסל המחזור)" };
+
 // Every open (not done) reminder with an alertDate, across ALL profiles —
 // not just the active one — since a push notification should fire regardless
 // of which profile happens to be selected in the browser (or whether the app

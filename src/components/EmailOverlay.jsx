@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { uid, formatDate, EMAIL_FORMAT_OPTIONS, EMAIL_FORMAT_LABELS, ruleFormats } from "../utils";
+import { uid, formatDate, EMAIL_FORMAT_OPTIONS, EMAIL_FORMAT_LABELS, ruleFormats, EMAIL_INSTRUCTION_ACTION_LABELS } from "../utils";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 
 // Full-screen "email summaries" feature home page: Gmail connect/auth and
@@ -16,6 +16,9 @@ export default function EmailOverlay({
   gmailLabels, labelsLoading, labelsError, fetchGmailLabels, ensureRuleLabel,
   archiveErrorMsg, setArchiveErrorMsg,
   onOpenOverview,
+  emailInstructions, saveEmailInstructions, newInstruction, setNewInstruction,
+  showNewInstruction, setShowNewInstruction, ensureInstructionLabel,
+  onOpenInstructionsLog,
 }) {
   const containerRef = useRef(null);
   // No onEscape — the client-ID and new-rule sub-forms already use Escape to
@@ -39,6 +42,19 @@ export default function EmailOverlay({
     if (!toSave.archiveLabelId && toSave.archiveLabelName) ensureRuleLabel(toSave);
     setNewRule({sender:"",subject:"",formats:["bullets"],dateFrom:"",dateAll:false});
     setShowNewRule(false);
+  };
+
+  const saveInstruction = () => {
+    if(!newInstruction.sender&&!newInstruction.subject)return;
+    if(newInstruction.action==="folder"&&!newInstruction.labelId&&!newInstruction.labelName)return;
+    const toSave = {...newInstruction};
+    if (!toSave.id) toSave.id = uid();
+    if(newInstruction.id){ saveEmailInstructions(emailInstructions.map(r=>r.id===newInstruction.id?toSave:r)); }
+    else{ saveEmailInstructions([...emailInstructions,toSave]); }
+    // Eagerly create a brand-new folder label right away, same reasoning as saveRule().
+    if (toSave.action==="folder"&&!toSave.labelId&&toSave.labelName) ensureInstructionLabel(toSave);
+    setNewInstruction({sender:"",subject:"",action:"folder"});
+    setShowNewInstruction(false);
   };
 
   return (
@@ -97,7 +113,11 @@ export default function EmailOverlay({
 
         {/* Browse already-fetched emails, grouped by rule */}
         {emailRules.length>0&&(
-          <button onClick={onOpenOverview} style={{width:"100%",background:"white",border:`1.5px solid ${accent}`,borderRadius:14,padding:"12px 0",fontSize:14,fontWeight:700,color:accent,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:20}}>📧 מיילים מסוכמים</button>
+          <button onClick={onOpenOverview} style={{width:"100%",background:"white",border:`1.5px solid ${accent}`,borderRadius:14,padding:"12px 0",fontSize:14,fontWeight:700,color:accent,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:emailInstructions.length>0?10:20}}>📧 מיילים מסוכמים</button>
+        )}
+        {/* Log of mail processed by sort/delete-only "הוראות" */}
+        {emailInstructions.length>0&&(
+          <button onClick={onOpenInstructionsLog} style={{width:"100%",background:"white",border:"1.5px solid #888",borderRadius:14,padding:"12px 0",fontSize:14,fontWeight:700,color:"#555",cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:20}}>📋 הוראות</button>
         )}
 
         {/* Rules */}
@@ -211,9 +231,109 @@ export default function EmailOverlay({
 
         {emailRules.length===0&&<div className="empty-state" style={{marginBottom:16}}>הגדירי חוק כדי להתחיל</div>}
 
+        {/* Instructions — lightweight sort/delete-only rules, no AI summarization */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,marginTop:24}}>
+          <span style={{fontWeight:700,fontSize:14}}>הוראות מיון/מחיקה</span>
+          <button onClick={()=>{setNewInstruction({sender:"",subject:"",action:"folder"});setShowNewInstruction(true);}} style={{background:"#555",color:"white",border:"none",borderRadius:10,padding:"5px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>+ הוראה חדשה</button>
+        </div>
+        <div style={{fontSize:11,color:"#8a8a8a",marginTop:-8,marginBottom:12}}>מיילים תואמים יעברו לתיקייה או יימחקו — בלי סיכום. אפשר לראות מה טופל בדף "📋 הוראות".</div>
+
+        {showNewInstruction&&(
+          <div style={{background:"white",borderRadius:14,padding:16,marginBottom:12,boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <span style={{fontSize:13,fontWeight:700}}>{newInstruction.id?"עריכת הוראה":"הוראה חדשה"}</span>
+              <button onClick={()=>{setShowNewInstruction(false);setNewInstruction({sender:"",subject:"",action:"folder"});}} style={{background:"none",border:"none",cursor:"pointer",color:"#8a8a8a",fontSize:18,lineHeight:1}} aria-label="בטל">✕</button>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <input className="plain-input" style={{fontSize:13}} placeholder="שולח (לדוג' newsletter.com, אופציונלי)" value={newInstruction.sender} onChange={e=>setNewInstruction(p=>({...p,sender:e.target.value}))}/>
+              <input className="plain-input" style={{fontSize:13}} placeholder="מילות מפתח (בלי שולח — יחפש רק לפי המילים)" value={newInstruction.subject} onChange={e=>setNewInstruction(p=>({...p,subject:e.target.value}))}/>
+              {newInstruction.subject&&(
+                <div style={{display:"flex",alignItems:"center",gap:8,background:"#f9f9f8",borderRadius:10,padding:"8px 12px"}}>
+                  <label style={{fontSize:12,color:"#888",whiteSpace:"nowrap"}}>לחפש:</label>
+                  <div style={{display:"flex",gap:6}}>
+                    {[["subject","רק בכותרת"],["all","גם בתוכן המייל"]].map(([v,l])=>(
+                      <button key={v} onClick={()=>setNewInstruction(p=>({...p,searchScope:v}))} style={{padding:"4px 10px",borderRadius:20,border:`1.5px solid ${(newInstruction.searchScope||"subject")===v?accent:"#dde"}`,background:(newInstruction.searchScope||"subject")===v?`${accent}15`:"white",color:(newInstruction.searchScope||"subject")===v?accent:"#888",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,fontWeight:(newInstruction.searchScope||"subject")===v?700:400}}>{l}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Date range */}
+              <div style={{display:"flex",alignItems:"center",gap:8,background:"#f9f9f8",borderRadius:10,padding:"8px 12px"}}>
+                <label style={{fontSize:12,color:"#888",whiteSpace:"nowrap"}}>תקופה:</label>
+                <label style={{display:"flex",alignItems:"center",gap:4,fontSize:12,cursor:"pointer"}}>
+                  <input type="checkbox" checked={newInstruction.dateAll||false} onChange={e=>setNewInstruction(p=>({...p,dateAll:e.target.checked,dateFrom:""}))}/> כל המיילים
+                </label>
+                {!newInstruction.dateAll&&<input type="date" className="plain-input" style={{flex:1,fontSize:12,padding:"4px 8px",colorScheme:"light"}} value={newInstruction.dateFrom||""} onChange={e=>setNewInstruction(p=>({...p,dateFrom:e.target.value}))} placeholder="מתאריך"/>}
+              </div>
+              {!newInstruction.dateAll&&!newInstruction.dateFrom&&<div style={{fontSize:11,color:"#6b6b6b",marginTop:-4}}>בלי תאריך ובלי "כל המיילים" — מחפש רק 30 הימים האחרונים.</div>}
+
+              {/* Action type */}
+              <div style={{display:"flex",gap:8}}>
+                {Object.entries(EMAIL_INSTRUCTION_ACTION_LABELS).map(([v,l])=>(
+                  <button key={v} onClick={()=>setNewInstruction(p=>({...p,action:v}))} style={{flex:1,padding:"7px 10px",borderRadius:10,border:`1.5px solid ${newInstruction.action===v?accent:"#dde"}`,background:newInstruction.action===v?`${accent}15`:"white",color:newInstruction.action===v?accent:"#888",cursor:"pointer",fontFamily:"'Heebo',sans-serif",fontSize:12,fontWeight:newInstruction.action===v?700:400}}>{l}</button>
+                ))}
+              </div>
+
+              {newInstruction.action==="folder"&&(
+                !gmailToken ? (
+                  <div style={{fontSize:11,color:"#b91c1c"}}>התחברי קודם ל-Gmail כדי לבחור תיקייה.</div>
+                ) : (
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <select
+                        className="plain-input" style={{flex:1,fontSize:12}}
+                        value={newInstruction.labelId ? newInstruction.labelId : (newInstruction.labelName!=null ? "__new__" : "")}
+                        onChange={e=>{
+                          const v = e.target.value;
+                          if (v === "__new__") setNewInstruction(p=>({...p,labelId:null,labelName:p.labelName||""}));
+                          else if (v === "") setNewInstruction(p=>({...p,labelId:null,labelName:null}));
+                          else { const label = gmailLabels.find(l=>l.id===v); setNewInstruction(p=>({...p,labelId:v,labelName:label?.name||""})); }
+                        }}
+                      >
+                        <option value="">בחרי תיקייה</option>
+                        {gmailLabels.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
+                        <option value="__new__">+ תיקייה חדשה</option>
+                      </select>
+                      <button type="button" onClick={fetchGmailLabels} disabled={labelsLoading} aria-label="רענני תיקיות" style={{background:"none",border:"1.5px solid #dde",borderRadius:8,cursor:"pointer",fontSize:13,padding:"5px 8px",color:"#888",flexShrink:0}}>{labelsLoading?"⏳":"🔄"}</button>
+                    </div>
+                    {(!newInstruction.labelId && newInstruction.labelName!=null) && (
+                      <input className="plain-input" style={{fontSize:12}} placeholder="שם התיקייה החדשה" value={newInstruction.labelName||""} onChange={e=>setNewInstruction(p=>({...p,labelName:e.target.value}))}/>
+                    )}
+                    {labelsError && <div style={{fontSize:11,color:"#b91c1c"}}>{labelsError}</div>}
+                  </div>
+                )
+              )}
+              {newInstruction.action==="delete"&&(
+                <div style={{fontSize:11,color:"#8a8a8a"}}>המיילים התואמים יועברו לסל המחזור של Gmail (ניתן לשחזור, לא מחיקה סופית).</div>
+              )}
+
+              <div style={{display:"flex",gap:8}}>
+                <button className="add-btn" style={{flex:1}} onClick={saveInstruction}>{newInstruction.id?"עדכן הוראה":"שמור הוראה"}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {emailInstructions.map(instruction=>(
+          <div key={instruction.id} style={{background:"white",borderRadius:12,padding:"12px 14px",marginBottom:8,boxShadow:"0 1px 6px rgba(0,0,0,0.05)",display:"flex",alignItems:"center",gap:10,borderRight:"3px solid #888"}}>
+            <div style={{flex:1}}>
+              {instruction.sender&&<div style={{fontSize:13,fontWeight:600}}>מ: {instruction.sender}</div>}
+              {instruction.subject&&<div style={{fontSize:12,color:"#888"}}>מילות מפתח: {instruction.subject} ({instruction.searchScope==="all"?"כותרת+תוכן":"כותרת בלבד"})</div>}
+              <div style={{fontSize:11,color:"#555",marginTop:2}}>
+                {EMAIL_INSTRUCTION_ACTION_LABELS[instruction.action]}
+                {instruction.action==="folder"&&(instruction.labelName||gmailLabels.find(l=>l.id===instruction.labelId)?.name)&&` → "${instruction.labelName||gmailLabels.find(l=>l.id===instruction.labelId)?.name}"`}
+                {" • "}
+                {instruction.dateAll?"כל המיילים":instruction.dateFrom?`מ-${formatDate(instruction.dateFrom)}`:"30 ימים אחרונים"}
+              </div>
+            </div>
+            <button onClick={()=>{setNewInstruction({sender:"",subject:"",dateFrom:"",dateAll:false,...instruction});setShowNewInstruction(true);}} style={{background:"none",border:"none",color:"#8a8a8a",cursor:"pointer",fontSize:15}} aria-label="ערוך הוראה">✎</button>
+            <button onClick={()=>saveEmailInstructions(emailInstructions.filter(r=>r.id!==instruction.id))} style={{background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:16}} aria-label="מחק הוראה">✕</button>
+          </div>
+        ))}
+
         {/* Fetch button */}
-        {gmailToken&&emailRules.length>0&&(
-          <button onClick={fetchAndSummarize} disabled={emailLoading} style={{width:"100%",background:accent,color:"white",border:"none",borderRadius:14,padding:"13px 0",fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+        {gmailToken&&(emailRules.length>0||emailInstructions.length>0)&&(
+          <button onClick={fetchAndSummarize} disabled={emailLoading} style={{width:"100%",background:accent,color:"white",border:"none",borderRadius:14,padding:"13px 0",fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginTop:20,marginBottom:20,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
             {emailLoading?<><div className="spinner" style={{borderTopColor:"white",borderColor:"rgba(255,255,255,0.3)"}}/>טוען מיילים...</>:"🔄 סכמי מיילים עכשיו"}
           </button>
         )}
