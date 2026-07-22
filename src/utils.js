@@ -79,6 +79,14 @@ export const urlBase64ToUint8Array = (base64String) => {
   return outputArray;
 };
 
+// Shared between EmailOverlay, EmailSummariesOverview and EmailRuleDetail so
+// format labels/order stay consistent everywhere a rule's formats are shown.
+export const EMAIL_FORMAT_OPTIONS = [["bullets","• נקודות"],["summary","📝 סיכום"],["tasks","✅ משימות"],["dates","📅 תאריכים"]];
+export const EMAIL_FORMAT_LABELS = Object.fromEntries(EMAIL_FORMAT_OPTIONS);
+// A rule created before multi-select support only has a singular `format`
+// string — this reads either shape back as an array so old rules keep working.
+export const ruleFormats = (rule) => (rule?.formats?.length ? rule.formats : [rule?.format || "bullets"]);
+
 // Every open (not done) reminder with an alertDate, across ALL profiles —
 // not just the active one — since a push notification should fire regardless
 // of which profile happens to be selected in the browser (or whether the app

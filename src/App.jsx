@@ -7,6 +7,9 @@ import QuickCapture from "./components/QuickCapture";
 import ListsMenu from "./components/ListsMenu";
 import ListDetailOverlay from "./components/ListDetailOverlay";
 import EmailOverlay from "./components/EmailOverlay";
+import EmailSummariesOverview from "./components/EmailSummariesOverview";
+import EmailRuleDetail from "./components/EmailRuleDetail";
+import EmailFolderView from "./components/EmailFolderView";
 import ProjectsOverlay from "./components/ProjectsOverlay";
 import VoiceHelpModal from "./components/VoiceHelpModal";
 import SidePills from "./components/SidePills";
@@ -116,7 +119,11 @@ export default function App() {
   const [showEmail,setShowEmail] = useState(false);
   const [gmailToken,setGmailToken] = useState(()=>localStorage.getItem("gmail_token")||null);
   const [emailRules,setEmailRules] = useState(()=>{ try{return JSON.parse(localStorage.getItem("email_rules"))||[];}catch{return[];} });
-  const [emailSummaries,setEmailSummaries] = useState([]);
+  // Persisted across reloads (unlike before) so marking an email done/pending
+  // and the "only show what hasn't been handled yet" view survive a refresh.
+  // Each entry: {id (threadId), ruleId, subject, sender, date, results, archived, status}
+  // where status is null (untouched) | "pending" | "done".
+  const [emailSummaries,setEmailSummaries] = useState(()=>{ try{return JSON.parse(localStorage.getItem("email_summaries"))||[];}catch{return[];} });
   const [emailLoading,setEmailLoading] = useState(false);
   const [emailStatusMsg,setEmailStatusMsg] = useState("");
   const [showNewRule,setShowNewRule] = useState(false);
@@ -129,12 +136,38 @@ export default function App() {
   const [showClientIdInput,setShowClientIdInput] = useState(false);
   const [gmailAuthError,setGmailAuthError] = useState("");
   // Gmail labels (folders) — used by the "move matching mail out of the inbox"
-  // feature on each rule, and by the manual per-email archive button.
+  // feature on each rule, and by the read-only folder-contents viewer.
   const [gmailLabels,setGmailLabels] = useState([]);
   const [labelsLoading,setLabelsLoading] = useState(false);
   const [labelsError,setLabelsError] = useState("");
-  const [archivingId,setArchivingId] = useState(null); // thread id currently being moved, for a per-card spinner
   const [archiveErrorMsg,setArchiveErrorMsg] = useState("");
+  const [ruleSyncingId,setRuleSyncingId] = useState(null); // rule id currently being individually re-synced
+
+  // ── Email sub-pages (מיילים מסוכמים) ──────────────────────────────────────
+  // These are separate full-screen "pages" reached from the email home overlay.
+  // Navigation is flat (not a stack): every sub-page has exactly two nav
+  // actions — back to the email home overlay, or straight to the app's main
+  // screen — so closing/opening never needs to remember how deep we are.
+  const [showEmailOverview,setShowEmailOverview] = useState(false); // rules list ("מיילים מסוכמים")
+  const [openRuleId,setOpenRuleId] = useState(null); // rule detail page
+  const [showRuleFolder,setShowRuleFolder] = useState(false); // folder-contents viewer for the open rule
+  const [folderMessages,setFolderMessages] = useState([]);
+  const [folderLoading,setFolderLoading] = useState(false);
+  const [folderError,setFolderError] = useState("");
+
+  // Every one of these is written to be fully exclusive — it turns off every
+  // OTHER email sub-page flag, not just turns on its own. Two of these
+  // full-screen overlays ever being mounted at once is more than a visual
+  // glitch: each runs its own useFocusTrap, and two active traps fight over
+  // focus (each pulling it back into its own container), which recurses
+  // synchronously forever. Keep these as the only place that touches these
+  // flags — never toggle showEmail/showEmailOverview/openRuleId/showRuleFolder
+  // directly from a component.
+  const openEmailOverview = () => { setShowEmail(false); setShowEmailOverview(true); setOpenRuleId(null); setShowRuleFolder(false); };
+  const goEmailAppHome = () => { setShowEmail(false); setShowEmailOverview(false); setOpenRuleId(null); setShowRuleFolder(false); };
+  const goEmailHome = () => { setShowEmailOverview(false); setOpenRuleId(null); setShowRuleFolder(false); setShowEmail(true); };
+  const openRuleDetail = (ruleId) => { setShowEmail(false); setShowEmailOverview(false); setOpenRuleId(ruleId); setShowRuleFolder(false); };
+  const closeRuleDetail = () => { setOpenRuleId(null); setShowRuleFolder(false); setShowEmail(false); setShowEmailOverview(true); };
 
   // ── Cloud backup (Google Drive) ───────────────────────────────────────────
   // Reuses the same Google Client ID as the Gmail feature (a Client ID isn't
@@ -187,6 +220,10 @@ export default function App() {
   useEffect(()=>{
     localStorage.setItem(STORAGE_KEY,JSON.stringify({profiles,activeProfile:activeProfileId}));
   },[profiles,activeProfileId]);
+
+  useEffect(()=>{
+    localStorage.setItem("email_summaries",JSON.stringify(emailSummaries));
+  },[emailSummaries]);
 
   useEffect(()=>{
     const h=(e)=>{
@@ -487,7 +524,10 @@ export default function App() {
     }
   };
 
-  const disconnectGmail = (message="") => { setGmailToken(null); localStorage.removeItem("gmail_token"); setEmailSummaries([]); setGmailAuthError(message); setGmailLabels([]); };
+  // Note: emailSummaries (and the done/pending marks on them) are intentionally
+  // NOT cleared here — they're a persisted local record of what's been
+  // triaged, independent of whether Gmail happens to be connected right now.
+  const disconnectGmail = (message="") => { setGmailToken(null); localStorage.removeItem("gmail_token"); setGmailAuthError(message); setGmailLabels([]); };
 
   const editGmailClientId = () => { setGmailAuthError(""); setShowClientIdInput(true); };
 
@@ -573,22 +613,52 @@ export default function App() {
     }
   };
 
-  // Manual per-email action on a summary card — moves just that one thread,
-  // using whatever label its rule is configured with (existing or newly
-  // created on first use), independent of whether the rule auto-archives.
-  const manualArchiveSummary = async (summary) => {
-    const rule = emailRules.find(r => r.id === summary.ruleId);
-    if (!rule || (!rule.archiveLabelId && !rule.archiveLabelName)) return;
-    setArchivingId(summary.id);
-    setArchiveErrorMsg("");
-    const labelId = await ensureRuleLabel(rule);
-    if (labelId) {
-      const ok = await archiveThreadToLabel(summary.id, labelId);
-      if (ok) setEmailSummaries(prev => prev.map(s => s.id === summary.id ? { ...s, archived: true } : s));
-      else setArchiveErrorMsg(prev => prev || "ההעברה לתיקייה נכשלה. נסי שוב בעוד רגע.");
-    }
-    setArchivingId(null);
+  // Manual per-email triage mark — "done" / "pending" / back to untouched.
+  // This is deliberately the only per-email action exposed in the UI (no
+  // delete/move-to-folder button per card) — archiving is either automatic
+  // (rule.archiveAuto) or viewed read-only via the folder page.
+  const setSummaryStatus = (ruleId, threadId, status) => {
+    setEmailSummaries(prev => prev.map(s => (s.ruleId === ruleId && s.id === threadId) ? { ...s, status } : s));
   };
+
+  // Lists (lightly, metadata-only — no AI summarization) the current contents
+  // of a Gmail label, so the "📁 תיקייה" button can show what's actually been
+  // moved there, live from Gmail, without Taskup needing to track it itself.
+  const fetchFolderMessages = async (labelId) => {
+    if (!gmailToken || !labelId) return;
+    setFolderLoading(true);
+    setFolderError("");
+    try {
+      const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?labelIds=${encodeURIComponent(labelId)}&maxResults=25`, { headers: { Authorization: `Bearer ${gmailToken}` } });
+      if (listRes.status === 401) { disconnectGmail("החיבור לחשבון Gmail פג תוקף — התחברי מחדש."); return; }
+      if (!listRes.ok) { setFolderError("לא הצלחתי לטעון את תוכן התיקייה."); return; }
+      const listData = await listRes.json();
+      const ids = (listData.messages || []).map(m => m.id);
+      const messages = [];
+      for (const id of ids) {
+        try {
+          const mRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, { headers: { Authorization: `Bearer ${gmailToken}` } });
+          if (!mRes.ok) continue;
+          const mData = await mRes.json();
+          const headers = mData.payload?.headers || [];
+          messages.push({
+            id,
+            subject: headers.find(h=>h.name==="Subject")?.value || "(ללא נושא)",
+            sender: headers.find(h=>h.name==="From")?.value || "",
+            date: headers.find(h=>h.name==="Date")?.value || "",
+          });
+        } catch { /* skip a message we couldn't read metadata for */ }
+      }
+      setFolderMessages(messages);
+    } catch (e) {
+      console.error("fetchFolderMessages failed", e);
+      setFolderError("שגיאה בטעינת תוכן התיקייה.");
+    } finally {
+      setFolderLoading(false);
+    }
+  };
+
+  const openRuleFolder = (labelId) => { setShowEmail(false); setShowEmailOverview(false); setShowRuleFolder(true); setFolderMessages([]); fetchFolderMessages(labelId); };
 
   // Refresh the label list whenever we (re)connect, so a newly-connected user
   // (or one who just re-authed with the new scope) sees her folders right away.
@@ -601,134 +671,163 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gmailToken]);
 
+  // Does the actual search+fetch+summarize+auto-archive work for ONE rule.
+  // Threads already present in `existingKeys` (i.e. already synced before, in
+  // ANY status — untouched/pending/done) are skipped entirely: no re-fetch,
+  // no re-summarize, no re-archive attempt. This is what makes a sync
+  // incremental ("what's new since last time") instead of replacing
+  // everything and losing done/pending marks. Returns data only — doesn't
+  // touch component state, so both the global sync and a single-rule
+  // re-sync can share it.
+  const runRuleSync = async (rule, existingKeys) => {
+    const ruleLabel = [rule.sender&&`מ: ${rule.sender}`, rule.subject&&`מילים: ${rule.subject}`].filter(Boolean).join(" | ") || "(חוק ללא תנאים)";
+    const newEntries = [];
+    let threadsFoundCount = 0;
+    let failures = 0;
+    let authExpired = false;
+    let debugLine = "";
+    try {
+      // Build Gmail search query. Note: no "in:inbox" restriction — Gmail's
+      // default search already excludes Spam/Trash, but still matches mail
+      // that's been archived out of the inbox (a very common case).
+      let q = "";
+      if (rule.dateAll) { /* no date filter */ }
+      else if (rule.dateFrom) { q += `after:${rule.dateFrom.replace(/-/g,"/")} `; }
+      else { q += "newer_than:30d "; }
+      if (rule.sender) {
+        // Quote multi-word senders (e.g. a display name) — otherwise Gmail
+        // treats "from:יוסי כהן" as from:יוסי AND a separate required word
+        // "כהן" anywhere in the email, which usually matches nothing.
+        const senderTerm = rule.sender.includes(" ") ? `"${rule.sender}"` : rule.sender;
+        q += `from:${senderTerm} `;
+      }
+      if (rule.subject) {
+        // Quote multi-word terms so Gmail matches the phrase, not each word separately.
+        const term = rule.subject.includes(" ") ? `"${rule.subject}"` : rule.subject;
+        // scope "all" = also search the email body, not just the subject line.
+        q += rule.searchScope === "all" ? `${term} ` : `subject:${term} `;
+      }
+      q = q.trim();
+
+      const searchRes = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=5`,
+        { headers: { Authorization: `Bearer ${gmailToken}` } }
+      );
+      if (searchRes.status === 401) {
+        disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי לסכם שוב.");
+        authExpired = true;
+        return { newEntries, threadsFoundCount, failures, debugLine, authExpired };
+      }
+      if (searchRes.status === 403) {
+        // 403 almost always means Gmail API access itself is blocked — not a bad
+        // query. Surface Google's own error message (e.g. "Gmail API has not been
+        // used in project ... before or it is disabled", or "Request had
+        // insufficient authentication scopes") instead of a bare status code.
+        let detail = "";
+        try { const errBody = await searchRes.json(); detail = errBody?.error?.message || ""; } catch { /* ignore parse failure */ }
+        throw new Error(`אין הרשאה (403)${detail?`: ${detail}`:""} — ודאי ש-Gmail API מופעל בפרויקט ב-Google Cloud Console, ושאישרת את הרשאת קריאת המייל בזמן ההתחברות.`);
+      }
+      if (!searchRes.ok) throw new Error(`Gmail search failed: ${searchRes.status}`);
+      const searchData = await searchRes.json();
+      const threads = searchData.threads || [];
+      threadsFoundCount = threads.length;
+      debugLine = `${ruleLabel} → שאילתה: "${q}" → ${threads.length} תוצאות`;
+
+      // Skip threads we've already synced before (in any status) — this is
+      // what makes a sync incremental instead of re-summarizing (and
+      // re-archiving!) the same mail every single time.
+      const freshThreads = threads.filter(t => !existingKeys.has(`${rule.id}:${t.id}`));
+
+      // Resolve (or create, on first use) this rule's target Gmail label once
+      // per rule per sync, not once per thread — avoids redundant create calls.
+      const ruleLabelId = (rule.archiveAuto && freshThreads.length && (rule.archiveLabelId || rule.archiveLabelName))
+        ? await ensureRuleLabel(rule)
+        : null;
+
+      for (const thread of freshThreads.slice(0, 3)) {
+        const tRes = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=full`,
+          { headers: { Authorization: `Bearer ${gmailToken}` } }
+        );
+        if (!tRes.ok) { console.error(`Gmail thread fetch failed: ${tRes.status}`); failures++; continue; }
+        const tData = await tRes.json();
+        const msg = tData.messages?.[0];
+        if (!msg) continue;
+        const headers = msg.payload?.headers || [];
+        const subject = headers.find(h=>h.name==="Subject")?.value || "";
+        const sender = headers.find(h=>h.name==="From")?.value || "";
+        const date = headers.find(h=>h.name==="Date")?.value || "";
+
+        // Decode body
+        const getBody = (part) => {
+          if (part.body?.data) return atob(part.body.data.replace(/-/g,"+").replace(/_/g,"/"));
+          if (part.parts) return part.parts.map(getBody).join(" ");
+          return "";
+        };
+        const rawBody = getBody(msg.payload);
+        const body = rawBody.replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
+
+        // A rule can request several summary formats at once — each one is
+        // its own AI call (the worker only knows how to produce one format
+        // per request) and they're kept separate so the UI can show each
+        // under its own collapsible heading instead of one merged blob.
+        const formats = rule.formats?.length ? rule.formats : [rule.format || "bullets"];
+        const results = {};
+        for (const fmt of formats) {
+          try {
+            const sumRes = await fetch(`${WORKER_URL}/summarize-email`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ subject, sender, body: body.slice(0,3000), format: fmt }),
+            });
+            if (!sumRes.ok) { console.error(`summarize-email failed (${fmt}): ${sumRes.status}`); failures++; continue; }
+            const sumData = await sumRes.json();
+            // Defense in depth: the worker already retries+falls back on an
+            // empty AI completion, but if an older worker deploy is still
+            // live, don't let a blank section render silently either.
+            results[fmt] = (sumData.result && sumData.result.trim())
+              ? sumData.result
+              : "לא התקבל תוכן עבור הפורמט הזה. נסי לגבות שוב.";
+          } catch (fmtErr) {
+            console.error(`summarize-email error (${fmt})`, fmtErr); failures++;
+          }
+        }
+        if (Object.keys(results).length) {
+          // If this rule auto-archives, move the thread out of the inbox right
+          // away — visible later as a badge in the rule's card, and always
+          // viewable (live) via the "📁 תיקייה" folder page.
+          const archived = ruleLabelId ? await archiveThreadToLabel(thread.id, ruleLabelId) : false;
+          newEntries.push({ id: thread.id, subject, sender, date, results, ruleId: rule.id, archived, status: null });
+        }
+      }
+    } catch(e) {
+      console.error(e);
+      failures++;
+      debugLine = `${ruleLabel} → שגיאה: ${e.message}`;
+    }
+    return { newEntries, threadsFoundCount, failures, debugLine, authExpired };
+  };
+
   const fetchAndSummarize = async () => {
     if (!gmailToken || emailRules.length === 0) return;
     setEmailLoading(true);
     setEmailStatusMsg("");
-    const summaries = [];
+    const existingKeys = new Set(emailSummaries.map(s => `${s.ruleId}:${s.id}`));
+    const allNew = [];
     let threadsFound = 0;
     let summarizeFailures = 0;
-    const ruleDebug = []; // per-rule diagnostics: what we searched for and what came back
+    const ruleDebug = [];
     for (const rule of emailRules) {
-      const ruleLabel = [rule.sender&&`מ: ${rule.sender}`, rule.subject&&`מילים: ${rule.subject}`].filter(Boolean).join(" | ") || "(חוק ללא תנאים)";
-      try {
-        // Build Gmail search query. Note: no "in:inbox" restriction — Gmail's
-        // default search already excludes Spam/Trash, but still matches mail
-        // that's been archived out of the inbox (a very common case).
-        let q = "";
-        if (rule.dateAll) { /* no date filter */ }
-        else if (rule.dateFrom) { q += `after:${rule.dateFrom.replace(/-/g,"/")} `; }
-        else { q += "newer_than:30d "; }
-        if (rule.sender) {
-          // Quote multi-word senders (e.g. a display name) — otherwise Gmail
-          // treats "from:יוסי כהן" as from:יוסי AND a separate required word
-          // "כהן" anywhere in the email, which usually matches nothing.
-          const senderTerm = rule.sender.includes(" ") ? `"${rule.sender}"` : rule.sender;
-          q += `from:${senderTerm} `;
-        }
-        if (rule.subject) {
-          // Quote multi-word terms so Gmail matches the phrase, not each word separately.
-          const term = rule.subject.includes(" ") ? `"${rule.subject}"` : rule.subject;
-          // scope "all" = also search the email body, not just the subject line.
-          q += rule.searchScope === "all" ? `${term} ` : `subject:${term} `;
-        }
-        q = q.trim();
-
-        const searchRes = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=5`,
-          { headers: { Authorization: `Bearer ${gmailToken}` } }
-        );
-        if (searchRes.status === 401) {
-          disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי לסכם שוב.");
-          setEmailLoading(false);
-          return;
-        }
-        if (searchRes.status === 403) {
-          // 403 almost always means Gmail API access itself is blocked — not a bad
-          // query. Surface Google's own error message (e.g. "Gmail API has not been
-          // used in project ... before or it is disabled", or "Request had
-          // insufficient authentication scopes") instead of a bare status code.
-          let detail = "";
-          try { const errBody = await searchRes.json(); detail = errBody?.error?.message || ""; } catch { /* ignore parse failure */ }
-          throw new Error(`אין הרשאה (403)${detail?`: ${detail}`:""} — ודאי ש-Gmail API מופעל בפרויקט ב-Google Cloud Console, ושאישרת את הרשאת קריאת המייל בזמן ההתחברות.`);
-        }
-        if (!searchRes.ok) throw new Error(`Gmail search failed: ${searchRes.status}`);
-        const searchData = await searchRes.json();
-        const threads = searchData.threads || [];
-        threadsFound += threads.length;
-        ruleDebug.push(`${ruleLabel} → שאילתה: "${q}" → ${threads.length} תוצאות`);
-
-        // Resolve (or create, on first use) this rule's target Gmail label once
-        // per rule per sync, not once per thread — avoids redundant create calls.
-        const ruleLabelId = (rule.archiveAuto && threads.length && (rule.archiveLabelId || rule.archiveLabelName))
-          ? await ensureRuleLabel(rule)
-          : null;
-
-        for (const thread of threads.slice(0, 3)) {
-          const tRes = await fetch(
-            `https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=full`,
-            { headers: { Authorization: `Bearer ${gmailToken}` } }
-          );
-          if (!tRes.ok) { console.error(`Gmail thread fetch failed: ${tRes.status}`); summarizeFailures++; continue; }
-          const tData = await tRes.json();
-          const msg = tData.messages?.[0];
-          if (!msg) continue;
-          const headers = msg.payload?.headers || [];
-          const subject = headers.find(h=>h.name==="Subject")?.value || "";
-          const sender = headers.find(h=>h.name==="From")?.value || "";
-          const date = headers.find(h=>h.name==="Date")?.value || "";
-
-          // Decode body
-          const getBody = (part) => {
-            if (part.body?.data) return atob(part.body.data.replace(/-/g,"+").replace(/_/g,"/"));
-            if (part.parts) return part.parts.map(getBody).join(" ");
-            return "";
-          };
-          const rawBody = getBody(msg.payload);
-          const body = rawBody.replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
-
-          // A rule can request several summary formats at once — each one is
-          // its own AI call (the worker only knows how to produce one format
-          // per request) and they're kept separate so the UI can show each
-          // under its own collapsible heading instead of one merged blob.
-          const formats = rule.formats?.length ? rule.formats : [rule.format || "bullets"];
-          const results = {};
-          for (const fmt of formats) {
-            try {
-              const sumRes = await fetch(`${WORKER_URL}/summarize-email`, {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ subject, sender, body: body.slice(0,3000), format: fmt }),
-              });
-              if (!sumRes.ok) { console.error(`summarize-email failed (${fmt}): ${sumRes.status}`); summarizeFailures++; continue; }
-              const sumData = await sumRes.json();
-              // Defense in depth: the worker already retries+falls back on an
-              // empty AI completion, but if an older worker deploy is still
-              // live, don't let a blank section render silently either.
-              results[fmt] = (sumData.result && sumData.result.trim())
-                ? sumData.result
-                : "לא התקבל תוכן עבור הפורמט הזה. נסי לגבות שוב.";
-            } catch (fmtErr) {
-              console.error(`summarize-email error (${fmt})`, fmtErr); summarizeFailures++;
-            }
-          }
-          if (Object.keys(results).length) {
-            // If this rule auto-archives, move the thread out of the inbox right
-            // away — a per-card "archived" badge (rather than a button) then
-            // shows it already happened; if it fails, the manual button below
-            // still lets her retry it individually.
-            const archived = ruleLabelId ? await archiveThreadToLabel(thread.id, ruleLabelId) : false;
-            summaries.push({ id: thread.id, subject, sender, date, results, ruleId: rule.id, archived });
-          }
-        }
-      } catch(e) {
-        console.error(e);
-        summarizeFailures++;
-        ruleDebug.push(`${ruleLabel} → שגיאה: ${e.message}`);
-      }
+      const result = await runRuleSync(rule, existingKeys);
+      if (result.authExpired) { setEmailLoading(false); return; }
+      threadsFound += result.threadsFoundCount;
+      summarizeFailures += result.failures;
+      if (result.debugLine) ruleDebug.push(result.debugLine);
+      result.newEntries.forEach(e => existingKeys.add(`${e.ruleId}:${e.id}`));
+      allNew.push(...result.newEntries);
     }
-    setEmailSummaries(summaries);
-    if (summaries.length === 0) {
+    if (allNew.length) setEmailSummaries(prev => [...prev, ...allNew]);
+    if (allNew.length === 0) {
       if (threadsFound === 0) {
         setEmailStatusMsg(
           "לא נמצאו מיילים תואמים לחוקים. בדקי שהשולח/הנושא מדויקים, או סמני \"כל המיילים\" בעריכת החוק — כברירת מחדל מחפשים רק 30 ימים אחורה.\n\nפירוט לפי חוק:\n"
@@ -737,10 +836,24 @@ export default function App() {
       } else if (summarizeFailures > 0) {
         setEmailStatusMsg("נמצאו מיילים תואמים, אבל הסיכום נכשל. נסי שוב בעוד רגע — אם זה ממשיך לקרות ייתכן שיש בעיה בשרת הסיכום.");
       } else {
-        setEmailStatusMsg("נמצאו מיילים אך לא ניתן היה לקרוא את תוכנם.");
+        setEmailStatusMsg("נמצאו מיילים תואמים, אבל כבר נסרקו קודם — אין חדש. אפשר לראות אותם ב\"מיילים מסוכמים\".");
       }
     }
     setEmailLoading(false);
+  };
+
+  // Re-sync just one rule (used by the "🔄 עדכן" button on its detail page)
+  // instead of running every rule again.
+  const syncSingleRule = async (rule) => {
+    if (!gmailToken) return;
+    setRuleSyncingId(rule.id);
+    setEmailStatusMsg("");
+    const existingKeys = new Set(emailSummaries.map(s => `${s.ruleId}:${s.id}`));
+    const result = await runRuleSync(rule, existingKeys);
+    if (!result.authExpired && result.newEntries.length) {
+      setEmailSummaries(prev => [...prev, ...result.newEntries]);
+    }
+    setRuleSyncingId(null);
   };
 
   // ── Cloud backup (Google Drive) ────────────────────────────────────────────
@@ -1196,7 +1309,7 @@ export default function App() {
           />
         )}
 
-        {/* Email overlay */}
+        {/* Email overlay — home page (rule management + connect) */}
         {showEmail&&(
           <EmailOverlay
             accent={accent}
@@ -1204,11 +1317,62 @@ export default function App() {
             gmailClientId={gmailClientId} setGmailClientId={setGmailClientId} showClientIdInput={showClientIdInput} setShowClientIdInput={setShowClientIdInput} editGmailClientId={editGmailClientId}
             gmailToken={gmailToken} connectGmail={connectGmail} disconnectGmail={disconnectGmail} gmailAuthError={gmailAuthError} setGmailAuthError={setGmailAuthError}
             emailRules={emailRules} saveEmailRules={saveEmailRules} newRule={newRule} setNewRule={setNewRule} showNewRule={showNewRule} setShowNewRule={setShowNewRule}
-            emailLoading={emailLoading} fetchAndSummarize={fetchAndSummarize} emailStatusMsg={emailStatusMsg} emailSummaries={emailSummaries}
-            gmailLabels={gmailLabels} labelsLoading={labelsLoading} labelsError={labelsError} fetchGmailLabels={fetchGmailLabels}
-            archivingId={archivingId} archiveErrorMsg={archiveErrorMsg} setArchiveErrorMsg={setArchiveErrorMsg} manualArchiveSummary={manualArchiveSummary}
+            emailLoading={emailLoading} fetchAndSummarize={fetchAndSummarize} emailStatusMsg={emailStatusMsg}
+            gmailLabels={gmailLabels} labelsLoading={labelsLoading} labelsError={labelsError} fetchGmailLabels={fetchGmailLabels} ensureRuleLabel={ensureRuleLabel}
+            archiveErrorMsg={archiveErrorMsg} setArchiveErrorMsg={setArchiveErrorMsg}
+            onOpenOverview={openEmailOverview}
           />
         )}
+
+        {/* Email overlay — "מיילים מסוכמים" rules list */}
+        {showEmailOverview&&(
+          <EmailSummariesOverview
+            accent={accent}
+            emailRules={emailRules}
+            emailSummaries={emailSummaries}
+            onOpenRule={openRuleDetail}
+            onBackToEmailHome={goEmailHome}
+            onAppHome={goEmailAppHome}
+          />
+        )}
+
+        {/* Email overlay — single rule's emails (done/pending triage) */}
+        {openRuleId&&!showRuleFolder&&(() => {
+          const rule = emailRules.find(r=>r.id===openRuleId);
+          if (!rule) { closeRuleDetail(); return null; }
+          return (
+            <EmailRuleDetail
+              accent={accent}
+              rule={rule}
+              gmailLabels={gmailLabels}
+              summaries={emailSummaries.filter(s=>s.ruleId===rule.id)}
+              onSetStatus={(threadId,status)=>setSummaryStatus(rule.id,threadId,status)}
+              onSyncRule={()=>syncSingleRule(rule)}
+              syncing={ruleSyncingId===rule.id}
+              onOpenFolder={async ()=>{ const id = rule.archiveLabelId || await ensureRuleLabel(rule); openRuleFolder(id); }}
+              onBackToEmailHome={goEmailHome}
+              onAppHome={goEmailAppHome}
+            />
+          );
+        })()}
+
+        {/* Email overlay — read-only Gmail folder contents viewer */}
+        {openRuleId&&showRuleFolder&&(() => {
+          const rule = emailRules.find(r=>r.id===openRuleId);
+          const label = rule && gmailLabels.find(l=>l.id===rule.archiveLabelId);
+          return (
+            <EmailFolderView
+              accent={accent}
+              labelName={label?.name || rule?.archiveLabelName || "?"}
+              messages={folderMessages}
+              loading={folderLoading}
+              error={folderError}
+              onRefresh={()=>fetchFolderMessages(rule?.archiveLabelId)}
+              onBackToEmailHome={goEmailHome}
+              onAppHome={goEmailAppHome}
+            />
+          );
+        })()}
 
         {/* Cloud backup overlay */}
         {showCloudBackup&&(

@@ -1,30 +1,46 @@
-import { useRef, useState } from "react";
-import { uid, formatDate } from "../utils";
+import { useRef } from "react";
+import { uid, formatDate, EMAIL_FORMAT_OPTIONS, EMAIL_FORMAT_LABELS, ruleFormats } from "../utils";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 
-const FORMAT_OPTIONS = [["bullets","• נקודות"],["summary","📝 סיכום"],["tasks","✅ משימות"],["dates","📅 תאריכים"]];
-const FORMAT_LABELS = Object.fromEntries(FORMAT_OPTIONS);
-// A rule created before multi-select support only has a singular `format`
-// string — this reads either shape back as an array so old rules keep working.
-const ruleFormats = (rule) => (rule?.formats?.length ? rule.formats : [rule?.format || "bullets"]);
-
-// Full-screen "email summaries" feature: Gmail connect/auth, summarization
-// rule management, and the fetched summary cards.
+// Full-screen "email summaries" feature home page: Gmail connect/auth and
+// summarization rule management. Browsing the actual fetched emails (and
+// marking them done/pending) happens on separate pages reached via the
+// "📧 מיילים מסוכמים" button — see EmailSummariesOverview/EmailRuleDetail.
 export default function EmailOverlay({
   accent,
   setShowEmail,
   gmailClientId, setGmailClientId, showClientIdInput, setShowClientIdInput, editGmailClientId,
   gmailToken, connectGmail, disconnectGmail, gmailAuthError, setGmailAuthError,
   emailRules, saveEmailRules, newRule, setNewRule, showNewRule, setShowNewRule,
-  emailLoading, fetchAndSummarize, emailStatusMsg, emailSummaries,
-  gmailLabels, labelsLoading, labelsError, fetchGmailLabels,
-  archivingId, archiveErrorMsg, setArchiveErrorMsg, manualArchiveSummary,
+  emailLoading, fetchAndSummarize, emailStatusMsg,
+  gmailLabels, labelsLoading, labelsError, fetchGmailLabels, ensureRuleLabel,
+  archiveErrorMsg, setArchiveErrorMsg,
+  onOpenOverview,
 }) {
-  const [collapsedSections, setCollapsedSections] = useState({});
   const containerRef = useRef(null);
   // No onEscape — the client-ID and new-rule sub-forms already use Escape to
   // cancel just themselves, so this only traps Tab focus within the overlay.
   useFocusTrap(containerRef, true);
+
+  const saveRule = () => {
+    if(!newRule.sender&&!newRule.subject)return;
+    const toSave = {...newRule, formats: ruleFormats(newRule)};
+    delete toSave.format;
+    // Assign the id BEFORE saving (rather than inline in the array literal)
+    // so `toSave` itself carries the real id — the eager label-creation call
+    // below needs to reference the same id that ends up in emailRules, or its
+    // resulting archiveLabelId update silently fails to attach to anything.
+    if (!toSave.id) toSave.id = uid();
+    if(newRule.id){ saveEmailRules(emailRules.map(r=>r.id===newRule.id?toSave:r)); }
+    else{ saveEmailRules([...emailRules,toSave]); }
+    // If a brand-new label name was chosen (no id resolved yet), create it in
+    // Gmail right away — so the rule's "📁 תיקייה" button works immediately,
+    // even before the first sync (which only resolves it if archiveAuto is on).
+    if (!toSave.archiveLabelId && toSave.archiveLabelName) ensureRuleLabel(toSave);
+    setNewRule({sender:"",subject:"",formats:["bullets"],dateFrom:"",dateAll:false});
+    setShowNewRule(false);
+  };
+
   return (
     <div ref={containerRef} role="dialog" aria-modal="true" aria-label="סיכומי מייל" tabIndex={-1} style={{position:"fixed",inset:0,background:"#f5f6fa",zIndex:200,direction:"rtl",display:"flex",flexDirection:"column",fontFamily:"'Heebo',sans-serif"}}>
       <div style={{background:"white",borderBottom:"1px solid #eeeef5",padding:"14px 20px",display:"flex",alignItems:"center",gap:12}}>
@@ -79,6 +95,11 @@ export default function EmailOverlay({
           </div>
         )}
 
+        {/* Browse already-fetched emails, grouped by rule */}
+        {emailRules.length>0&&(
+          <button onClick={onOpenOverview} style={{width:"100%",background:"white",border:`1.5px solid ${accent}`,borderRadius:14,padding:"12px 0",fontSize:14,fontWeight:700,color:accent,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:20}}>📧 מיילים מסוכמים</button>
+        )}
+
         {/* Rules */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
           <span style={{fontWeight:700,fontSize:14}}>חוקי סיכום</span>
@@ -115,7 +136,7 @@ export default function EmailOverlay({
               {!newRule.dateAll&&!newRule.dateFrom&&<div style={{fontSize:11,color:"#6b6b6b",marginTop:-4}}>בלי תאריך ובלי "כל המיילים" — מחפש רק 30 הימים האחרונים.</div>}
               <div style={{fontSize:11,color:"#8a8a8a",marginTop:-2}}>אפשר לבחור כמה סוגי סיכום — כל אחד יופיע בנפרד תחת הכותרת שלו</div>
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                {FORMAT_OPTIONS.map(([v,l])=>{
+                {EMAIL_FORMAT_OPTIONS.map(([v,l])=>{
                   const selected = ruleFormats(newRule).includes(v);
                   return (
                     <button key={v} onClick={()=>setNewRule(p=>{
@@ -146,7 +167,7 @@ export default function EmailOverlay({
                           else { const label = gmailLabels.find(l=>l.id===v); setNewRule(p=>({...p,archiveLabelId:v,archiveLabelName:label?.name||""})); }
                         }}
                       >
-                        <option value="">בלי תיקייה (בלי העברה, גם לא ידנית)</option>
+                        <option value="">בלי תיקייה (בלי העברה)</option>
                         {gmailLabels.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
                         <option value="__new__">+ תיקייה חדשה</option>
                       </select>
@@ -158,18 +179,10 @@ export default function EmailOverlay({
                     {labelsError && <div style={{fontSize:11,color:"#b91c1c"}}>{labelsError}</div>}
                   </div>
                 )}
-                <div style={{fontSize:11,color:"#8a8a8a"}}>אם לא מסמנים "אוטומטית" אבל בוחרים תיקייה — יופיע כפתור להעביר כל מייל בנפרד, אחרי הסיכום.</div>
+                <div style={{fontSize:11,color:"#8a8a8a"}}>אפשר לצפות במה שכבר עבר לתיקייה דרך דף "מיילים מסוכמים" ← החוק ← 📁 תיקייה.</div>
               </div>
               <div style={{display:"flex",gap:8}}>
-                <button className="add-btn" style={{flex:1}} onClick={()=>{
-                  if(!newRule.sender&&!newRule.subject)return;
-                  const toSave = {...newRule, formats: ruleFormats(newRule)};
-                  delete toSave.format;
-                  if(newRule.id){ saveEmailRules(emailRules.map(r=>r.id===newRule.id?toSave:r)); }
-                  else{ saveEmailRules([...emailRules,{id:uid(),...toSave}]); }
-                  setNewRule({sender:"",subject:"",formats:["bullets"],dateFrom:"",dateAll:false});
-                  setShowNewRule(false);
-                }}>{newRule.id?"עדכן חוק":"שמור חוק"}</button>
+                <button className="add-btn" style={{flex:1}} onClick={saveRule}>{newRule.id?"עדכן חוק":"שמור חוק"}</button>
               </div>
             </div>
           </div>
@@ -181,7 +194,7 @@ export default function EmailOverlay({
               {rule.sender&&<div style={{fontSize:13,fontWeight:600}}>מ: {rule.sender}</div>}
               {rule.subject&&<div style={{fontSize:12,color:"#888"}}>מילות מפתח: {rule.subject} ({rule.searchScope==="all"?"כותרת+תוכן":"כותרת בלבד"})</div>}
               <div style={{fontSize:11,color:accent,marginTop:2}}>
-                {ruleFormats(rule).map(f=>FORMAT_LABELS[f]||f).join(" + ")}
+                {ruleFormats(rule).map(f=>EMAIL_FORMAT_LABELS[f]||f).join(" + ")}
                 {" • "}
                 {rule.dateAll?"כל המיילים":rule.dateFrom?`מ-${formatDate(rule.dateFrom)}`:"30 ימים אחרונים"}
               </div>
@@ -212,59 +225,13 @@ export default function EmailOverlay({
           </div>
         )}
 
-        {/* Archive/move errors (from the manual per-email button, or an automatic move that failed) */}
+        {/* Archive/move errors (from an automatic move that failed) */}
         {archiveErrorMsg&&(
           <div style={{background:"#fef2f2",border:"1.5px solid #fca5a5",borderRadius:12,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#b91c1c",display:"flex",alignItems:"center",gap:8}}>
             <span>⚠️</span>
             <span style={{flex:1}}>{archiveErrorMsg}</span>
             <button onClick={()=>setArchiveErrorMsg("")} style={{background:"none",border:"none",color:"#b91c1c",cursor:"pointer",fontSize:14,flexShrink:0}} aria-label="סגור">✕</button>
           </div>
-        )}
-
-        {/* Summaries */}
-        {emailSummaries.map((s,i)=>{
-          // Older in-memory summaries (before multi-format support) only have
-          // a single `summary` string — fold that into the same {format:text} shape.
-          const results = s.results || (s.summary ? { [s.format||"summary"]: s.summary } : {});
-          const entries = Object.entries(results);
-          const archiveRule = emailRules.find(r=>r.id===s.ruleId);
-          const archiveLabelName = archiveRule && (archiveRule.archiveLabelName || gmailLabels.find(l=>l.id===archiveRule.archiveLabelId)?.name);
-          return (
-            <div key={s.id||i} style={{background:"white",borderRadius:16,padding:"16px 18px",marginBottom:12,boxShadow:"0 1px 8px rgba(0,0,0,0.07)"}}>
-              <div style={{fontSize:11,color:"#6b6b6b",marginBottom:4}}>{s.sender} • {s.date?new Date(s.date).toLocaleDateString("he-IL",{day:"numeric",month:"short"}):"" }</div>
-              <div style={{fontWeight:700,fontSize:14,marginBottom:10,color:"#1a1a2e"}}>{s.subject}</div>
-              {entries.map(([fmt,text],idx)=>{
-                const key = `${s.id||i}_${fmt}`;
-                const collapsed = !!collapsedSections[key];
-                return (
-                  <div key={fmt} style={{marginTop:idx>0?10:0,paddingTop:idx>0?10:0,borderTop:idx>0?"1px solid #f0f0f8":"none"}}>
-                    <button
-                      onClick={()=>setCollapsedSections(p=>({...p,[key]:!p[key]}))}
-                      style={{display:"flex",alignItems:"center",gap:6,width:"100%",background:"none",border:"none",cursor:"pointer",padding:0,marginBottom:collapsed?0:6,fontFamily:"'Heebo',sans-serif"}}
-                    >
-                      <span style={{fontSize:12,fontWeight:700,color:accent}}>{FORMAT_LABELS[fmt]||fmt}</span>
-                      <span style={{fontSize:11,color:"#8a8a8a",marginRight:"auto"}}>{collapsed?"▸":"▾"}</span>
-                    </button>
-                    {!collapsed&&<div style={{fontSize:13,color:"#444",lineHeight:1.7,whiteSpace:"pre-line"}}>{text}</div>}
-                  </div>
-                );
-              })}
-              {archiveLabelName&&(
-                s.archived
-                  ? <div style={{marginTop:10,fontSize:12,color:"#2d6a4f",fontWeight:600}}>✅ הועבר לתיקיית "{archiveLabelName}"</div>
-                  : <button
-                      disabled={archivingId===s.id}
-                      onClick={()=>manualArchiveSummary(s)}
-                      style={{marginTop:10,background:"none",border:"1.5px solid #0077b6",borderRadius:10,color:"#0077b6",padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}
-                    >
-                      {archivingId===s.id?"מעבירה...":`📥 העבירי לתיקיית "${archiveLabelName}"`}
-                    </button>
-              )}
-            </div>
-          );
-        })}
-        {emailSummaries.length===0&&!emailLoading&&!emailStatusMsg&&gmailToken&&emailRules.length>0&&(
-          <div className="empty-state">לחצי "סכמי מיילים עכשיו" כדי לראות תוצאות</div>
         )}
       </div>
     </div>
