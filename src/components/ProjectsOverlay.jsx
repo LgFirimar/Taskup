@@ -1,5 +1,6 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import ProjectImportModal from "./ProjectImportModal";
 
 // Full-screen "projects" feature: project list + a tabbed project detail view
 // (overview dashboard, tasks, timeline, brainstorm bubbles, inspiration board).
@@ -16,12 +17,14 @@ export default function ProjectsOverlay({
   showNewTimeline, setShowNewTimeline, newTimelineItem, setNewTimelineItem, addTimelineItem, deleteTimelineItem,
   newBubbleText, setNewBubbleText, addBubble, deleteBubble, aiThinkBubbles, aiThinkingProj,
   newBoardText, setNewBoardText, addBoardItem, deleteBoardItem,
+  applyProjectImport,
 }) {
   const containerRef = useRef(null);
   // No onEscape — several sub-forms here (new project, new timeline item,
   // new subtask) already use Escape to cancel just themselves, so this only
   // traps Tab focus within the full-screen overlay.
   useFocusTrap(containerRef, true);
+  const [showImportModal, setShowImportModal] = useState(false);
   return (
     <div ref={containerRef} role="dialog" aria-modal="true" aria-label="פרויקטים" tabIndex={-1} style={{position:"fixed",inset:0,background:"#f5f6fa",zIndex:200,direction:"rtl",display:"flex",flexDirection:"column",fontFamily:"'Heebo',sans-serif"}}>
       {/* Projects header */}
@@ -32,9 +35,22 @@ export default function ProjectsOverlay({
         </button>
         <span style={{fontWeight:800,fontSize:17,flex:1,color:"#1a1a2e"}}>{openProject?openProject.name:"פרויקטים"}</span>
         {openProject&&(
+          <button onClick={()=>setShowImportModal(true)} style={{background:"none",border:`1.5px solid ${accent}`,borderRadius:10,color:accent,padding:"5px 10px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",whiteSpace:"nowrap"}}>📎 ייבוא מקובץ</button>
+        )}
+        {openProject&&(
           <div style={{fontSize:12,color:"#6b6b6b",fontWeight:500}}>התקדמות {getProjectProgress(openProject)}%</div>
         )}
       </div>
+
+      {openProject&&showImportModal&&(
+        <ProjectImportModal
+          projectId={openProject.id}
+          projectName={openProject.name}
+          accent={accent}
+          applyProjectImport={applyProjectImport}
+          onClose={()=>setShowImportModal(false)}
+        />
+      )}
 
       {/* Progress bar for open project */}
       {openProject&&(

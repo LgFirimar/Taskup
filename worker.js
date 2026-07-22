@@ -157,6 +157,52 @@ async function sendDueReminders(env) {
   }
 }
 
+// Builds the prompt for /parse-project-file. `prompt` below ends up as the
+// Messages API's `content` field, which accepts either a plain string or an
+// array of content blocks (image/document/text) — callClaude() just forwards
+// whatever it's given, so passing an array here works without any changes to
+// that helper.
+function projectImportPrompt(todayStr, inlineText) {
+  const instructions = `את/ה עוזר/ת שמפרקת תוכן (מסמך, פתק, או תמונה של פתק בכתב יד) לרכיבים שאפשר להזין ישירות לפרויקט ניהול משימות. תאריך היום: ${todayStr}.
+
+נתחי את התוכן המצורף וזהי:
+- tasks: משימות לביצוע. כל משימה: טקסט קצר וברור, ואופציונלית תת-משימות (subtasks) אם יש פירוט לשלבים.
+- timeline: אבני דרך/מועדים. אם מוזכר תאריך יחסי ("יום שלישי הבא", "בעוד שבוע") נסי לחשב תאריך מוחלט (YYYY-MM-DD) לפי תאריך היום; אם אין תאריך ברור, השאירי date כ-null.
+- brainstorm: רעיונות חופשיים, מחשבות, נושאים לדיון.
+- board: ציטוטים, השראה, קישורים, או כל תוכן רלוונטי שלא מתאים לשלוש הקטגוריות האחרות.
+
+חשוב מאוד:
+- החזירי אך ורק אובייקט JSON תקין, בלי שום טקסט נוסף לפניו או אחריו, ובלי code fences של markdown.
+- מבנה מדויק (כולל כל המפתחות, גם אם המערך ריק): {"tasks":[{"text":"...","subtasks":["..."]}],"timeline":[{"text":"...","date":"YYYY-MM-DD"}],"brainstorm":["..."],"board":["..."]}
+- אל תמציאי תוכן שלא מופיע במקור — אם קטגוריה מסוימת ריקה, החזירי עבורה מערך ריק.`;
+  return inlineText ? `${instructions}\n\nתוכן הקובץ:\n${inlineText.slice(0, 8000)}` : instructions;
+}
+
+// Best-effort parse of Claude's JSON response — strips a markdown code fence
+// if the model wrapped its output in one despite being told not to, then
+// validates + caps shape so a malformed or huge response can't break the
+// client or balloon KV/response size.
+function parseProjectImportResponse(raw) {
+  let cleaned = raw.trim();
+  const fenceMatch = cleaned.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+  if (fenceMatch) cleaned = fenceMatch[1];
+  const data = JSON.parse(cleaned);
+
+  const capText = (s, len = 300) => String(s || "").slice(0, len);
+  const tasks = Array.isArray(data.tasks) ? data.tasks.slice(0, 40).map(t => ({
+    text: capText(t?.text),
+    subtasks: Array.isArray(t?.subtasks) ? t.subtasks.slice(0, 15).map(s => capText(s, 200)).filter(Boolean) : [],
+  })).filter(t => t.text) : [];
+  const timeline = Array.isArray(data.timeline) ? data.timeline.slice(0, 40).map(it => ({
+    text: capText(it?.text),
+    date: typeof it?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(it.date) ? it.date : null,
+  })).filter(it => it.text) : [];
+  const brainstorm = Array.isArray(data.brainstorm) ? data.brainstorm.slice(0, 40).map(s => capText(s, 200)).filter(Boolean) : [];
+  const board = Array.isArray(data.board) ? data.board.slice(0, 40).map(s => capText(s, 400)).filter(Boolean) : [];
+
+  return { tasks, timeline, brainstorm, board };
+}
+
 async function callClaude(env, { maxTokens, prompt }) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -261,6 +307,45 @@ export default {
           result = "לא הצלחתי להפיק תוכן עבור הפורמט הזה מהמייל הזה. נסי לגבות שוב בעוד רגע.";
         }
         return new Response(JSON.stringify({ result }), { headers: { ...headers, "content-type": "application/json" } });
+      }
+
+      if (request.method === "POST" && url.pathname === "/parse-project-file") {
+        const { kind, mimeType, data, text } = await request.json();
+        if (kind !== "image" && kind !== "pdf" && kind !== "text") {
+          return new Response(JSON.stringify({ error: "Unsupported file kind" }), { status: 400, headers: { ...headers, "content-type": "application/json" } });
+        }
+        if ((kind === "image" || kind === "pdf") && (!data || typeof data !== "string")) {
+          return new Response(JSON.stringify({ error: "Missing file data" }), { status: 400, headers: { ...headers, "content-type": "application/json" } });
+        }
+        if (kind === "text" && (!text || typeof text !== "string" || !text.trim())) {
+          return new Response(JSON.stringify({ error: "Missing text" }), { status: 400, headers: { ...headers, "content-type": "application/json" } });
+        }
+
+        const todayStr = new Date().toISOString().split("T")[0];
+        let prompt;
+        if (kind === "image") {
+          prompt = [
+            { type: "image", source: { type: "base64", media_type: mimeType || "image/jpeg", data } },
+            { type: "text", text: projectImportPrompt(todayStr) },
+          ];
+        } else if (kind === "pdf") {
+          prompt = [
+            { type: "document", source: { type: "base64", media_type: "application/pdf", data } },
+            { type: "text", text: projectImportPrompt(todayStr) },
+          ];
+        } else {
+          prompt = projectImportPrompt(todayStr, text);
+        }
+
+        const raw = await callClaude(env, { maxTokens: 2000, prompt });
+        let parsed;
+        try {
+          parsed = parseProjectImportResponse(raw);
+        } catch (err) {
+          console.error("parse-project-file: failed to parse Claude response", err.message, raw.slice(0, 300));
+          return new Response(JSON.stringify({ error: "לא הצלחתי לפרק את הקובץ הזה. נסי שוב או עם קובץ אחר." }), { status: 502, headers: { ...headers, "content-type": "application/json" } });
+        }
+        return new Response(JSON.stringify(parsed), { headers: { ...headers, "content-type": "application/json" } });
       }
 
       if (request.method === "POST" && url.pathname === "/push/subscribe") {

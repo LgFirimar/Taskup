@@ -356,6 +356,34 @@ export default function App() {
   const addBoardItem = (pid,text)=>{ if(!text.trim())return; updateProject(pid,pj=>({...pj,board:[...(pj.board||[]),{id:uid(),text:text.trim()}]})); };
   const deleteBoardItem = (pid,bid)=>updateProject(pid,pj=>({...pj,board:(pj.board||[]).filter(b=>b.id!==bid)}));
 
+  // Applies the user-selected subset of AI-suggested items (from
+  // ProjectImportModal) to a project in one batched update, rather than
+  // looping many separate add* calls.
+  const applyProjectImport = (pid, selection) => {
+    updateProject(pid, pj => ({
+      ...pj,
+      tasks: [
+        ...pj.tasks,
+        ...(selection.tasks||[]).filter(t=>t?.text?.trim()).map(t => ({
+          id: uid(), text: t.text.trim(), done: false,
+          subtasks: (t.subtasks||[]).filter(st=>st?.trim()).map(st => ({ id: uid(), text: st.trim(), done: false })),
+        })),
+      ],
+      timeline: [
+        ...(pj.timeline||[]),
+        ...(selection.timeline||[]).filter(it=>it?.text?.trim()).map(it => ({ id: uid(), text: it.text.trim(), date: it.date||"" })),
+      ].sort((a,b)=>(a.date||"").localeCompare(b.date||"")),
+      bubbles: [
+        ...(pj.bubbles||[]),
+        ...(selection.bubbles||[]).filter(t=>typeof t==="string"&&t.trim()).map(text => ({ id: uid(), text: text.trim(), type: "user" })),
+      ],
+      board: [
+        ...(pj.board||[]),
+        ...(selection.board||[]).filter(t=>typeof t==="string"&&t.trim()).map(text => ({ id: uid(), text: text.trim() })),
+      ],
+    }));
+  };
+
   const aiThinkBubbles = async (pid,topic)=>{
     setAiThinkingProj(true);
     try{
@@ -1082,6 +1110,7 @@ export default function App() {
             showNewTimeline={showNewTimeline} setShowNewTimeline={setShowNewTimeline} newTimelineItem={newTimelineItem} setNewTimelineItem={setNewTimelineItem} addTimelineItem={addTimelineItem} deleteTimelineItem={deleteTimelineItem}
             newBubbleText={newBubbleText} setNewBubbleText={setNewBubbleText} addBubble={addBubble} deleteBubble={deleteBubble} aiThinkBubbles={aiThinkBubbles} aiThinkingProj={aiThinkingProj}
             newBoardText={newBoardText} setNewBoardText={setNewBoardText} addBoardItem={addBoardItem} deleteBoardItem={deleteBoardItem}
+            applyProjectImport={applyProjectImport}
           />
         )}
 
