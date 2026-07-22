@@ -541,7 +541,12 @@ export default function App() {
               });
               if (!sumRes.ok) { console.error(`summarize-email failed (${fmt}): ${sumRes.status}`); summarizeFailures++; continue; }
               const sumData = await sumRes.json();
-              results[fmt] = sumData.result;
+              // Defense in depth: the worker already retries+falls back on an
+              // empty AI completion, but if an older worker deploy is still
+              // live, don't let a blank section render silently either.
+              results[fmt] = (sumData.result && sumData.result.trim())
+                ? sumData.result
+                : "לא התקבל תוכן עבור הפורמט הזה. נסי לגבות שוב.";
             } catch (fmtErr) {
               console.error(`summarize-email error (${fmt})`, fmtErr); summarizeFailures++;
             }

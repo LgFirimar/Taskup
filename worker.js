@@ -138,9 +138,18 @@ export default {
           dates:    "חלצי את כל התאריכים, מועדים ואירועים מהמייל. פורמט: YYYY-MM-DD | תיאור. כל שורה נפרדת.",
         };
 
-        const prompt = `מאת: ${(sender || "").slice(0, 200)}\nנושא: ${(subject || "").slice(0, 300)}\n\nתוכן:\n${body.slice(0, 3000)}\n\n---\n${formatInstructions[format] || formatInstructions.summary}`;
+        const prompt = `מאת: ${(sender || "").slice(0, 200)}\nנושא: ${(subject || "").slice(0, 300)}\n\nתוכן:\n${body.slice(0, 3000)}\n\n---\n${formatInstructions[format] || formatInstructions.summary}\n\nחשוב: תמיד תחזירי טקסט כלשהו — אם אין נקודות/משימות/תאריכים רלוונטיים במייל, כתבי משפט קצר שאומר זאת (למשל "לא נמצאו משימות במייל הזה"), ולעולם אל תחזירי תשובה ריקה.`;
 
-        const result = await callClaude(env, { maxTokens: 500, prompt });
+        let result = await callClaude(env, { maxTokens: 500, prompt });
+        // The model occasionally returns an empty (or whitespace-only)
+        // completion for no clear reason — retry once before giving up,
+        // rather than showing the user a blank section.
+        if (!result || !result.trim()) {
+          result = await callClaude(env, { maxTokens: 500, prompt }).catch(() => "");
+        }
+        if (!result || !result.trim()) {
+          result = "לא הצלחתי להפיק תוכן עבור הפורמט הזה מהמייל הזה. נסי לגבות שוב בעוד רגע.";
+        }
         return new Response(JSON.stringify({ result }), { headers: { ...headers, "content-type": "application/json" } });
       }
 
