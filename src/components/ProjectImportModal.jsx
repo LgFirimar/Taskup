@@ -2,7 +2,8 @@ import { useRef, useState } from "react";
 import { WORKER_URL } from "../utils";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 
-const MAX_BYTES = { image: 5 * 1024 * 1024, pdf: 15 * 1024 * 1024, text: 2 * 1024 * 1024 };
+const MAX_BYTES = { image: 5 * 1024 * 1024, pdf: 15 * 1024 * 1024, text: 2 * 1024 * 1024, docx: 8 * 1024 * 1024 };
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 const readAsText = (file) => file.text();
 const readAsBase64 = (file) => new Promise((resolve, reject) => {
@@ -11,6 +12,18 @@ const readAsBase64 = (file) => new Promise((resolve, reject) => {
   reader.onerror = () => reject(new Error("file read failed"));
   reader.readAsDataURL(file);
 });
+// mammoth is only pulled into the bundle when someone actually picks a .docx
+// file (dynamic import), so the common image/PDF/text paths don't pay for it.
+const extractDocxText = async (file) => {
+  // Plain "mammoth" import (not the prebuilt mammoth.browser.js, which is a
+  // UMD bundle meant for <script> tags) — Vite resolves this through the
+  // package's "browser" field, which swaps in browser-compatible unzip/file
+  // implementations automatically.
+  const mammoth = await import("mammoth");
+  const arrayBuffer = await file.arrayBuffer();
+  const { value } = await mammoth.extractRawText({ arrayBuffer });
+  return value;
+};
 
 const CATEGORY_META = {
   tasks: { label: "✅ משימות", key: "tasks" },
@@ -41,14 +54,19 @@ export default function ProjectImportModal({ projectId, projectName, accent, app
   const handleFile = async (file) => {
     if (!file) return;
     setError("");
-    const isImage = file.type.startsWith("image/");
-    const isPdf = file.type === "application/pdf";
+    // Checked against both MIME type AND file extension — iOS Safari in
+    // particular sometimes hands the file input an empty/generic file.type
+    // for .docx (and occasionally .txt), which would otherwise make a valid
+    // file look unsupported.
+    const isImage = file.type.startsWith("image/") || /\.(png|jpe?g|heic|heif|webp|gif)$/i.test(file.name);
+    const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+    const isDocx = file.type === DOCX_MIME || /\.docx$/i.test(file.name);
     const isText = file.type.startsWith("text/") || /\.(txt|md)$/i.test(file.name);
-    if (!isImage && !isPdf && !isText) {
-      setError("סוג קובץ לא נתמך כרגע — אפשר להעלות תמונה (גם צילום פתק בכתב יד), PDF או קובץ טקסט. Word עדיין לא נתמך ישירות — אפשר לייצא ל-PDF או להעתיק את הטקסט לתוך קובץ txt.");
+    if (!isImage && !isPdf && !isDocx && !isText) {
+      setError("סוג קובץ לא נתמך כרגע — אפשר להעלות תמונה (גם צילום פתק בכתב יד), PDF, Word (docx) או קובץ טקסט.");
       return;
     }
-    const kind = isImage ? "image" : isPdf ? "pdf" : "text";
+    const kind = isImage ? "image" : isPdf ? "pdf" : isDocx ? "docx" : "text";
     if (file.size > MAX_BYTES[kind]) {
       setError(`הקובץ גדול מדי (מקסימום ${Math.round(MAX_BYTES[kind] / 1024 / 1024)}MB לסוג הזה).`);
       return;
@@ -56,9 +74,20 @@ export default function ProjectImportModal({ projectId, projectName, accent, app
 
     setPhase("loading");
     try {
-      const payload = kind === "text"
-        ? { kind, text: await readAsText(file) }
-        : { kind, mimeType: file.type, data: await readAsBase64(file) };
+      let payload;
+      if (kind === "text") {
+        payload = { kind: "text", text: await readAsText(file) };
+      } else if (kind === "docx") {
+        const text = await extractDocxText(file);
+        if (!text || !text.trim()) {
+          setError("לא הצלחתי לחלץ טקסט מקובץ ה-Word הזה. אפשר לנסות לייצא אותו ל-PDF ולהעלות את זה.");
+          setPhase("idle");
+          return;
+        }
+        payload = { kind: "text", text };
+      } else {
+        payload = { kind, mimeType: file.type, data: await readAsBase64(file) };
+      }
 
       const res = await fetch(`${WORKER_URL}/parse-project-file`, {
         method: "POST",
@@ -115,12 +144,12 @@ export default function ProjectImportModal({ projectId, projectName, accent, app
           {phase === "idle" && (
             <>
               <div style={{ color: "#555" }}>
-                מעלים קובץ — תמונה (גם צילום פתק בכתב יד), PDF או טקסט — ו-AI מפרק אותו אוטומטית להצעות למשימות, לו״ז, Brain Storm ולוח השראה. את/ה תבחרי בסוף מה באמת נכנס לפרויקט.
+                מעלים קובץ — תמונה (גם צילום פתק בכתב יד), PDF, Word או טקסט — ו-AI מפרק אותו אוטומטית להצעות למשימות, לו״ז, Brain Storm ולוח השראה. את/ה תבחרי בסוף מה באמת נכנס לפרויקט.
               </div>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*,application/pdf,text/plain,.txt,.md"
+                accept="image/*,application/pdf,text/plain,.txt,.md,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 style={{ display: "none" }}
                 onChange={e => handleFile(e.target.files?.[0])}
               />
