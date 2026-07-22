@@ -58,3 +58,43 @@ export const computeInitialAlerts = () => {
   });
   return alerting;
 };
+
+// Public half of the VAPID keypair used for real push notifications (see
+// worker.js's sendDueReminders + the useFocusTrap-style usePushNotifications
+// hook). Not a secret — it's sent to every push service (FCM etc.) as part of
+// each subscription, and is meaningless without the private half, which lives
+// only as a Cloudflare Worker secret (VAPID_PRIVATE_KEY) and is never
+// committed. Both halves were generated together once; if the private key is
+// ever rotated on the Worker, this constant must be updated to match.
+export const VAPID_PUBLIC_KEY = "BMXM-WqaJ2e_22W0p58Bm2PbFr7UE8cE9u-Jhv59dwEhW60o8EZHxtqw6cAim_TkTdux-pM1XiUytThARa8uxHg";
+
+// pushManager.subscribe() wants the VAPID public key as a raw Uint8Array, not
+// the URL-safe base64 string it's normally shared as.
+export const urlBase64ToUint8Array = (base64String) => {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+};
+
+// Every open (not done) reminder with an alertDate, across ALL profiles —
+// not just the active one — since a push notification should fire regardless
+// of which profile happens to be selected in the browser (or whether the app
+// is even open at all). Sent to the Worker on every subscribe/resync so it
+// knows what to check on its cron schedule.
+export const collectAllReminders = (profiles) => {
+  const list = [];
+  Object.values(profiles || {}).forEach(p => {
+    (p.tabs || []).forEach(t => {
+      const collect = (reminders) => (reminders || []).forEach(r => {
+        if (r.done || !r.alertDate) return;
+        list.push({ id: r.id, text: r.text, alertDate: r.alertDate });
+      });
+      collect(t.reminders);
+      (t.subtabs || []).forEach(s => collect(s.reminders));
+    });
+  });
+  return list;
+};

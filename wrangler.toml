@@ -1,9 +1,29 @@
 name = "taskup-ai"
 main = "worker.js"
-compatibility_date = "2024-01-01"
+compatibility_date = "2024-09-23"
+# Needed by the "web-push" npm package (used for real push notifications —
+# see worker.js) for its crypto/VAPID-signing code, which is written against
+# Node's built-in crypto module.
+compatibility_flags = ["nodejs_compat"]
 
 # Optional: if you add a custom domain to the Pages site later, set
 # ALLOWED_ORIGIN in the Worker's dashboard environment variables (Workers &
 # Pages → taskup-ai → Settings → Variables) to that domain, e.g.
 # https://taskup.example.com — no code change or redeploy needed for that
 # part. *.pages.dev and localhost are already allowed without any config.
+
+# Checks every 15 minutes for reminders whose alertDate has arrived and sends
+# a real push notification to subscribed devices (see worker.js's
+# sendDueReminders / the scheduled() export). Applies automatically on the
+# next deploy — no dashboard action needed for this part.
+[triggers]
+crons = ["*/15 * * * *"]
+
+# KV namespace that stores each push subscription + its reminder schedule.
+# Uncomment once the namespace exists (Workers & Pages → KV → Create
+# namespace, e.g. name it "TASKUP_PUSH") and fill in its id below — until
+# then, /push/subscribe and /push/unsubscribe just return a "not configured"
+# error and the rest of the app is unaffected.
+# [[kv_namespaces]]
+# binding = "PUSH_KV"
+# id = "REPLACE_WITH_KV_NAMESPACE_ID"

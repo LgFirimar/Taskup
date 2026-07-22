@@ -5,7 +5,7 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 export default function AppHeader({
   accent, profiles, activeProfileId, allProfiles,
   profileMenuRef, showProfileMenu, setShowProfileMenu, switchProfile, setNewProfileName, setShowProfileModal, deleteCurrentProfile,
-  settingsMenuRef, showSettingsMenu, setShowSettingsMenu, exportBackup, importBackup, shareWhatsApp, setShowCloudBackup,
+  settingsMenuRef, showSettingsMenu, setShowSettingsMenu, exportBackup, importBackup, shareWhatsApp, setShowCloudBackup, setShowPushModal,
   voiceAvail, setShowVoiceHelp,
   searchQuery, setSearchQuery, searchResults, goToSearchResult,
   tabs, activeTab, setActiveTab, setActiveSubtab, setDefaultTab, deleteTab,
@@ -43,6 +43,7 @@ export default function AppHeader({
               <button className="dropdown-item" onClick={exportBackup}>📤 גיבוי</button>
               <button className="dropdown-item" onClick={importBackup}>📥 ייבוא גיבוי</button>
               <button className="dropdown-item" onClick={()=>{setShowSettingsMenu(false);setShowCloudBackup(true);}}>☁️ גיבוי ל-Google Drive</button>
+              <button className="dropdown-item" onClick={()=>{setShowSettingsMenu(false);setShowPushModal(true);}}>🔔 התראות Push</button>
               <div className="dropdown-divider"/>
               <button className="dropdown-item" onClick={shareWhatsApp}>💬 שתף ב-WhatsApp</button>
               {voiceAvail&&<>

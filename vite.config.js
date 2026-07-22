@@ -8,11 +8,16 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      // Precache the built app shell (JS/CSS/HTML) so the app opens even
-      // offline or on a flaky connection. Deliberately NOT caching the
-      // Cloudflare Worker (AI features) or Gmail/Google API calls — those
-      // need a live network and should just fail normally when offline.
-      workbox: {
+      // Switched from the default generateSW strategy to injectManifest so we
+      // can ship a hand-written service worker (src/sw.js) with 'push' and
+      // 'notificationclick' listeners for real push notifications — the
+      // auto-generated Workbox service worker has no hook for custom events.
+      // precacheAndRoute(self.__WB_MANIFEST) inside src/sw.js still gets the
+      // same offline app-shell caching as before; only the source changed.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
+      injectManifest: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
       },
       includeAssets: ['favicon.svg', 'icon.svg', 'icon.png'],

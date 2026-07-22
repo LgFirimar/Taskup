@@ -1,6 +1,23 @@
 // Deployed via Cloudflare Workers Builds (Git integration) — every push to
 // main on this repo now redeploys this Worker automatically.
 //
+// Real push notifications for reminders (see src/hooks/usePushNotifications.js
+// and src/sw.js on the client side): the client POSTs its push subscription +
+// current reminder list here, we store it in KV, and a cron trigger
+// (scheduled() below, configured in wrangler.toml) checks every 15 minutes
+// for reminders whose alertDate has arrived and sends a real Web Push.
+// Requires the PUSH_KV binding (KV namespace) and the VAPID_PRIVATE_KEY
+// secret to be configured on this Worker — see wrangler.toml for the KV
+// binding and the Cloudflare dashboard's "Variables and secrets" for the key
+// (same place ANTHROPIC_API_KEY lives).
+import webpush from "web-push";
+
+// Public half of the VAPID keypair — matches src/utils.js's VAPID_PUBLIC_KEY
+// constant exactly (both must come from the same generated pair). Not a
+// secret; the private half is a Worker secret and is never committed.
+const VAPID_PUBLIC_KEY = "BMXM-WqaJ2e_22W0p58Bm2PbFr7UE8cE9u-Jhv59dwEhW60o8EZHxtqw6cAim_TkTdux-pM1XiUytThARa8uxHg";
+const VAPID_SUBJECT = "https://taskup-ai.lior0gal.workers.dev";
+
 // Allowed origins for browser requests. Cloudflare Pages serves both the
 // production URL and every preview deploy under *.pages.dev, so we allow the
 // whole subdomain rather than one fixed URL (which would break previews and
@@ -48,6 +65,96 @@ function isRateLimited(ip) {
   hits.set(ip, timestamps);
   if (hits.size > 5000) hits.clear(); // crude cap so the Map can't grow unbounded
   return timestamps.length > RATE_LIMIT;
+}
+
+// KV keys must not contain the raw push endpoint URL (long, and identifies a
+// specific device) — hash it instead, both for a bounded key size and so a
+// leaked KV listing doesn't directly expose subscribers' endpoints.
+async function sha256Hex(str) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Every open reminder the client knows about, trimmed to just what the cron
+// job needs (id/text/alertDate) — see src/utils.js's collectAllReminders for
+// the client-side counterpart that builds this list.
+function sanitizeReminders(reminders) {
+  if (!Array.isArray(reminders)) return [];
+  return reminders
+    .filter(r => r && r.id && r.alertDate)
+    .slice(0, 500) // defensive cap — no real user should ever have this many open reminders
+    .map(r => ({ id: String(r.id), text: String(r.text || "תזכורת").slice(0, 200), alertDate: String(r.alertDate).slice(0, 10) }));
+}
+
+// Sends one Web Push message via fetch() rather than web-push's own
+// sendNotification(), which internally uses Node's https.request() — that
+// performs real outbound network I/O, which Cloudflare Workers' nodejs_compat
+// does not actually implement (it only shims computation, e.g. crypto).
+// generateRequestDetails() does all the same VAPID-signing/payload-encryption
+// work (pure crypto, safe under nodejs_compat) and just hands back a plain
+// {endpoint, method, headers, body} — which fetch() can send directly, and
+// fetch is fully native/supported in Workers.
+async function sendWebPush(subscription, payloadObj) {
+  const details = webpush.generateRequestDetails(subscription, JSON.stringify(payloadObj));
+  const headers = {};
+  for (const [k, v] of Object.entries(details.headers)) {
+    if (k.toLowerCase() === "content-length") continue; // let fetch compute this itself
+    headers[k] = String(v);
+  }
+  return fetch(details.endpoint, { method: details.method, headers, body: details.body });
+}
+
+// Runs on the cron schedule configured in wrangler.toml. Cloudflare KV list()
+// is eventually consistent and unordered, but that's fine here — we just need
+// to eventually visit every stored subscription, not any particular order.
+async function sendDueReminders(env) {
+  if (!env.PUSH_KV || !env.VAPID_PRIVATE_KEY) {
+    console.error("sendDueReminders: missing PUSH_KV binding or VAPID_PRIVATE_KEY secret — skipping.");
+    return;
+  }
+  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY);
+  const todayStr = new Date().toISOString().split("T")[0];
+
+  let cursor;
+  for (;;) {
+    const list = await env.PUSH_KV.list({ prefix: "push:", cursor });
+    for (const entry of list.keys) {
+      const raw = await env.PUSH_KV.get(entry.name);
+      if (!raw) continue;
+      let data;
+      try { data = JSON.parse(raw); } catch { continue; }
+
+      const notified = new Set(data.notified || []);
+      const due = (data.reminders || []).filter(r => r.alertDate <= todayStr && !notified.has(r.id));
+      if (due.length === 0) continue;
+
+      let gone = false;
+      for (const r of due) {
+        try {
+          const res = await sendWebPush(data.subscription, { title: "🔔 תזכורת מ-Taskup", body: r.text, url: "/" });
+          if (res.status === 404 || res.status === 410) {
+            // Subscription is no longer valid (browser data cleared, permission
+            // revoked, etc.) — remove it so we stop retrying forever.
+            await env.PUSH_KV.delete(entry.name);
+            gone = true;
+            break;
+          }
+          if (!res.ok) {
+            console.error("push send failed", entry.name, res.status, await res.text().catch(() => ""));
+            continue; // leave un-notified — will retry next cron run
+          }
+          notified.add(r.id);
+        } catch (err) {
+          console.error("push send threw", entry.name, err.message);
+        }
+      }
+      if (!gone) {
+        await env.PUSH_KV.put(entry.name, JSON.stringify({ ...data, notified: Array.from(notified) }));
+      }
+    }
+    if (list.list_complete) break;
+    cursor = list.cursor;
+  }
 }
 
 async function callClaude(env, { maxTokens, prompt }) {
@@ -156,6 +263,37 @@ export default {
         return new Response(JSON.stringify({ result }), { headers: { ...headers, "content-type": "application/json" } });
       }
 
+      if (request.method === "POST" && url.pathname === "/push/subscribe") {
+        if (!env.PUSH_KV) {
+          return new Response(JSON.stringify({ error: "Push notifications aren't configured on the server yet." }), { status: 503, headers: { ...headers, "content-type": "application/json" } });
+        }
+        const { subscription, reminders } = await request.json();
+        if (!subscription?.endpoint) {
+          return new Response(JSON.stringify({ error: "Missing subscription" }), { status: 400, headers: { ...headers, "content-type": "application/json" } });
+        }
+        const key = `push:${await sha256Hex(subscription.endpoint)}`;
+        const cleanReminders = sanitizeReminders(reminders);
+        const keepIds = new Set(cleanReminders.map(r => r.id));
+        const existingRaw = await env.PUSH_KV.get(key);
+        const existing = existingRaw ? JSON.parse(existingRaw) : null;
+        // Preserve which reminders were already notified across resyncs (the
+        // client resends its full reminder list on every change), so a
+        // reminder that already fired doesn't get pushed again — but drop
+        // entries for reminders that no longer exist client-side.
+        const notified = (existing?.notified || []).filter(id => keepIds.has(id));
+        await env.PUSH_KV.put(key, JSON.stringify({ subscription, reminders: cleanReminders, notified, updatedAt: new Date().toISOString() }));
+        return new Response(JSON.stringify({ ok: true }), { headers: { ...headers, "content-type": "application/json" } });
+      }
+
+      if (request.method === "POST" && url.pathname === "/push/unsubscribe") {
+        if (!env.PUSH_KV) {
+          return new Response(JSON.stringify({ ok: true }), { headers: { ...headers, "content-type": "application/json" } });
+        }
+        const { endpoint } = await request.json();
+        if (endpoint) await env.PUSH_KV.delete(`push:${await sha256Hex(endpoint)}`);
+        return new Response(JSON.stringify({ ok: true }), { headers: { ...headers, "content-type": "application/json" } });
+      }
+
       return new Response("Not found", { status: 404, headers });
     } catch (err) {
       console.error(err);
@@ -164,5 +302,10 @@ export default {
         headers: { ...headers, "content-type": "application/json" },
       });
     }
+  },
+
+  // Cloudflare cron trigger entry point (see [triggers] in wrangler.toml).
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(sendDueReminders(env));
   },
 };

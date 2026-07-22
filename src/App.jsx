@@ -15,8 +15,10 @@ import AppHeader from "./components/AppHeader";
 import TabContent from "./components/TabContent";
 import UndoToast from "./components/UndoToast";
 import CloudBackupModal from "./components/CloudBackupModal";
+import PushNotificationsModal from "./components/PushNotificationsModal";
 import { APP_CSS } from "./appStyles";
 import { useVoiceCommands } from "./hooks/useVoiceCommands";
+import { usePushNotifications } from "./hooks/usePushNotifications";
 import {
   uid, STORAGE_KEY, WORKER_URL, PRIO_CYCLE, TAB_COLORS, DEFAULT_GMAIL_CLIENT_ID,
   today, getReminderStatus, loadStorage, computeInitialAlerts,
@@ -139,6 +141,10 @@ export default function App() {
   const [restoreInProgress,setRestoreInProgress] = useState(false);
   const [driveAuthError,setDriveAuthError] = useState("");
   const autoBackupTimerRef = useRef(null);
+
+  // ── Push notifications (reminders only — see usePushNotifications.js) ────
+  const [showPushModal,setShowPushModal] = useState(false);
+  const { pushSupported, pushSubscribed, pushBusy, pushError, setPushError, enablePush, disablePush } = usePushNotifications({ profiles });
 
   // ── Reminder alerts ───────────────────────────────────────────────────────
   const [alertReminders] = useState(computeInitialAlerts);
@@ -1052,6 +1058,15 @@ export default function App() {
           />
         )}
 
+        {/* Push notifications overlay */}
+        {showPushModal&&(
+          <PushNotificationsModal
+            setShowPushModal={setShowPushModal}
+            pushSupported={pushSupported} pushSubscribed={pushSubscribed} pushBusy={pushBusy} pushError={pushError} setPushError={setPushError}
+            enablePush={enablePush} disablePush={disablePush}
+          />
+        )}
+
         {/* Projects overlay */}
         {(showProjects||openProjectId)&&(
           <ProjectsOverlay
@@ -1101,7 +1116,7 @@ export default function App() {
         <AppHeader
           accent={accent} profiles={profiles} activeProfileId={activeProfileId} allProfiles={allProfiles}
           profileMenuRef={profileMenuRef} showProfileMenu={showProfileMenu} setShowProfileMenu={setShowProfileMenu} switchProfile={switchProfile} setNewProfileName={setNewProfileName} setShowProfileModal={setShowProfileModal} deleteCurrentProfile={deleteCurrentProfile}
-          settingsMenuRef={settingsMenuRef} showSettingsMenu={showSettingsMenu} setShowSettingsMenu={setShowSettingsMenu} exportBackup={exportBackup} importBackup={importBackup} shareWhatsApp={shareWhatsApp} setShowCloudBackup={setShowCloudBackup}
+          settingsMenuRef={settingsMenuRef} showSettingsMenu={showSettingsMenu} setShowSettingsMenu={setShowSettingsMenu} exportBackup={exportBackup} importBackup={importBackup} shareWhatsApp={shareWhatsApp} setShowCloudBackup={setShowCloudBackup} setShowPushModal={setShowPushModal}
           voiceAvail={voiceAvail} setShowVoiceHelp={setShowVoiceHelp}
           searchQuery={searchQuery} setSearchQuery={setSearchQuery} searchResults={searchResults} goToSearchResult={goToSearchResult}
           tabs={tabs} activeTab={activeTab} setActiveTab={setActiveTab} setActiveSubtab={setActiveSubtab} setDefaultTab={setDefaultTab} deleteTab={deleteTab}

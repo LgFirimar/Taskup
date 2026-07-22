@@ -30,6 +30,15 @@ export function useFocusTrap(containerRef, active, onEscape) {
       (focusable[0] || container).focus?.();
     }
 
+    // Listening on `document` rather than `container` matters: if the
+    // focused element inside the modal gets removed/replaced by a re-render
+    // (e.g. an "enable" button swapping for a "disable" button after an
+    // async action), the browser drops focus to <body> — which is outside
+    // the container, so a container-level listener would never see the next
+    // keydown at all (native events only bubble through actual DOM
+    // ancestors) and Escape/Tab would silently stop working mid-interaction.
+    // A document-level listener always sees the event regardless of where
+    // focus currently sits, and self-heals via the focusin handler below.
     const handleKeyDown = (e) => {
       if (e.key === "Escape" && onEscape) {
         onEscape();
@@ -52,9 +61,20 @@ export function useFocusTrap(containerRef, active, onEscape) {
       }
     };
 
-    container.addEventListener("keydown", handleKeyDown);
+    // If focus ever ends up outside the container while active (the DOM-swap
+    // case above, or anything else), pull it back in immediately rather than
+    // waiting for the next Tab press.
+    const handleFocusIn = (e) => {
+      if (container.contains(e.target)) return;
+      const focusable = getFocusable(container);
+      (focusable[0] || container).focus?.();
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("focusin", handleFocusIn);
     return () => {
-      container.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("focusin", handleFocusIn);
       if (previouslyFocused.current && previouslyFocused.current.focus) {
         previouslyFocused.current.focus();
       }
