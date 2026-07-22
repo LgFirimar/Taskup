@@ -17,6 +17,8 @@ export default function EmailOverlay({
   gmailToken, connectGmail, disconnectGmail, gmailAuthError, setGmailAuthError,
   emailRules, saveEmailRules, newRule, setNewRule, showNewRule, setShowNewRule,
   emailLoading, fetchAndSummarize, emailStatusMsg, emailSummaries,
+  gmailLabels, labelsLoading, labelsError, fetchGmailLabels,
+  archivingId, archiveErrorMsg, setArchiveErrorMsg, manualArchiveSummary,
 }) {
   const [collapsedSections, setCollapsedSections] = useState({});
   const containerRef = useRef(null);
@@ -124,6 +126,40 @@ export default function EmailOverlay({
                   );
                 })}
               </div>
+              {/* Move matching mail out of the inbox into a Gmail folder (label) */}
+              <div style={{background:"#f9f9f8",borderRadius:10,padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
+                <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,cursor:"pointer",fontWeight:600}}>
+                  <input type="checkbox" checked={!!newRule.archiveAuto} onChange={e=>setNewRule(p=>({...p,archiveAuto:e.target.checked}))}/>
+                  📥 העבירי אוטומטית מיילים תואמים לתיקייה (יצאו מהאינבוקס)
+                </label>
+                {!gmailToken && <div style={{fontSize:11,color:"#b91c1c"}}>התחברי קודם ל-Gmail כדי לבחור תיקייה.</div>}
+                {gmailToken && (
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <select
+                        className="plain-input" style={{flex:1,fontSize:12}}
+                        value={newRule.archiveLabelId ? newRule.archiveLabelId : (newRule.archiveLabelName!=null ? "__new__" : "")}
+                        onChange={e=>{
+                          const v = e.target.value;
+                          if (v === "__new__") setNewRule(p=>({...p,archiveLabelId:null,archiveLabelName:p.archiveLabelName||""}));
+                          else if (v === "") setNewRule(p=>({...p,archiveLabelId:null,archiveLabelName:null}));
+                          else { const label = gmailLabels.find(l=>l.id===v); setNewRule(p=>({...p,archiveLabelId:v,archiveLabelName:label?.name||""})); }
+                        }}
+                      >
+                        <option value="">בלי תיקייה (בלי העברה, גם לא ידנית)</option>
+                        {gmailLabels.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
+                        <option value="__new__">+ תיקייה חדשה</option>
+                      </select>
+                      <button type="button" onClick={fetchGmailLabels} disabled={labelsLoading} aria-label="רענני תיקיות" style={{background:"none",border:"1.5px solid #dde",borderRadius:8,cursor:"pointer",fontSize:13,padding:"5px 8px",color:"#888",flexShrink:0}}>{labelsLoading?"⏳":"🔄"}</button>
+                    </div>
+                    {(!newRule.archiveLabelId && newRule.archiveLabelName!=null) && (
+                      <input className="plain-input" style={{fontSize:12}} placeholder="שם התיקייה החדשה" value={newRule.archiveLabelName||""} onChange={e=>setNewRule(p=>({...p,archiveLabelName:e.target.value}))}/>
+                    )}
+                    {labelsError && <div style={{fontSize:11,color:"#b91c1c"}}>{labelsError}</div>}
+                  </div>
+                )}
+                <div style={{fontSize:11,color:"#8a8a8a"}}>אם לא מסמנים "אוטומטית" אבל בוחרים תיקייה — יופיע כפתור להעביר כל מייל בנפרד, אחרי הסיכום.</div>
+              </div>
               <div style={{display:"flex",gap:8}}>
                 <button className="add-btn" style={{flex:1}} onClick={()=>{
                   if(!newRule.sender&&!newRule.subject)return;
@@ -149,6 +185,11 @@ export default function EmailOverlay({
                 {" • "}
                 {rule.dateAll?"כל המיילים":rule.dateFrom?`מ-${formatDate(rule.dateFrom)}`:"30 ימים אחרונים"}
               </div>
+              {(rule.archiveLabelId||rule.archiveLabelName)&&(
+                <div style={{fontSize:11,color:"#0077b6",marginTop:2}}>
+                  📥 {rule.archiveAuto?"מועבר אוטומטית לתיקיית":"אפשרות להעביר לתיקיית"} "{rule.archiveLabelName||gmailLabels.find(l=>l.id===rule.archiveLabelId)?.name||"?"}"
+                </div>
+              )}
             </div>
             <button onClick={()=>{setNewRule({sender:"",subject:"",dateFrom:"",dateAll:false,...rule,formats:ruleFormats(rule)});setShowNewRule(true);}} style={{background:"none",border:"none",color:"#8a8a8a",cursor:"pointer",fontSize:15}} aria-label="ערוך חוק">✎</button>
             <button onClick={()=>saveEmailRules(emailRules.filter(r=>r.id!==rule.id))} style={{background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:16}} aria-label="מחק חוק">✕</button>
@@ -171,12 +212,23 @@ export default function EmailOverlay({
           </div>
         )}
 
+        {/* Archive/move errors (from the manual per-email button, or an automatic move that failed) */}
+        {archiveErrorMsg&&(
+          <div style={{background:"#fef2f2",border:"1.5px solid #fca5a5",borderRadius:12,padding:"10px 14px",marginBottom:16,fontSize:12,color:"#b91c1c",display:"flex",alignItems:"center",gap:8}}>
+            <span>⚠️</span>
+            <span style={{flex:1}}>{archiveErrorMsg}</span>
+            <button onClick={()=>setArchiveErrorMsg("")} style={{background:"none",border:"none",color:"#b91c1c",cursor:"pointer",fontSize:14,flexShrink:0}} aria-label="סגור">✕</button>
+          </div>
+        )}
+
         {/* Summaries */}
         {emailSummaries.map((s,i)=>{
           // Older in-memory summaries (before multi-format support) only have
           // a single `summary` string — fold that into the same {format:text} shape.
           const results = s.results || (s.summary ? { [s.format||"summary"]: s.summary } : {});
           const entries = Object.entries(results);
+          const archiveRule = emailRules.find(r=>r.id===s.ruleId);
+          const archiveLabelName = archiveRule && (archiveRule.archiveLabelName || gmailLabels.find(l=>l.id===archiveRule.archiveLabelId)?.name);
           return (
             <div key={s.id||i} style={{background:"white",borderRadius:16,padding:"16px 18px",marginBottom:12,boxShadow:"0 1px 8px rgba(0,0,0,0.07)"}}>
               <div style={{fontSize:11,color:"#6b6b6b",marginBottom:4}}>{s.sender} • {s.date?new Date(s.date).toLocaleDateString("he-IL",{day:"numeric",month:"short"}):"" }</div>
@@ -197,6 +249,17 @@ export default function EmailOverlay({
                   </div>
                 );
               })}
+              {archiveLabelName&&(
+                s.archived
+                  ? <div style={{marginTop:10,fontSize:12,color:"#2d6a4f",fontWeight:600}}>✅ הועבר לתיקיית "{archiveLabelName}"</div>
+                  : <button
+                      disabled={archivingId===s.id}
+                      onClick={()=>manualArchiveSummary(s)}
+                      style={{marginTop:10,background:"none",border:"1.5px solid #0077b6",borderRadius:10,color:"#0077b6",padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}
+                    >
+                      {archivingId===s.id?"מעבירה...":`📥 העבירי לתיקיית "${archiveLabelName}"`}
+                    </button>
+              )}
             </div>
           );
         })}

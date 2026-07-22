@@ -128,6 +128,13 @@ export default function App() {
   const setGmailClientId = setGmailClientIdOverride;
   const [showClientIdInput,setShowClientIdInput] = useState(false);
   const [gmailAuthError,setGmailAuthError] = useState("");
+  // Gmail labels (folders) — used by the "move matching mail out of the inbox"
+  // feature on each rule, and by the manual per-email archive button.
+  const [gmailLabels,setGmailLabels] = useState([]);
+  const [labelsLoading,setLabelsLoading] = useState(false);
+  const [labelsError,setLabelsError] = useState("");
+  const [archivingId,setArchivingId] = useState(null); // thread id currently being moved, for a per-card spinner
+  const [archiveErrorMsg,setArchiveErrorMsg] = useState("");
 
   // ── Cloud backup (Google Drive) ───────────────────────────────────────────
   // Reuses the same Google Client ID as the Gmail feature (a Client ID isn't
@@ -424,16 +431,19 @@ export default function App() {
       try{
         const client = window.google.accounts.oauth2.initTokenClient({
           client_id: clientId,
-          scope: "https://www.googleapis.com/auth/gmail.readonly",
+          // gmail.modify (read + label/organize, no permanent delete) — a superset
+          // of the old gmail.readonly, needed so rules can also create Gmail labels
+          // and move matching mail out of the inbox, not just read/summarize it.
+          scope: "https://www.googleapis.com/auth/gmail.modify",
           callback: (response) => {
             if (response.access_token) {
               // Google's consent screen lets the user un-check individual permissions —
               // if she unchecked the Gmail one, we still get a token, but every Gmail
               // API call will fail with 403 later. Catch that here instead of leaving
               // her to hit a confusing 403 when she tries to summarize.
-              if (response.scope && !response.scope.includes("gmail.readonly")) {
-                console.error("Gmail auth: token granted without gmail.readonly scope",response.scope);
-                setGmailAuthError("ההתחברות הצליחה אבל לא אישרת את ההרשאה לקריאת Gmail (יכול להיות שהצ'קבוקס של \"קריאת המייל שלך\" בוטל בזמן האישור). נסי להתחבר שוב ווודאי שכל ההרשאות מסומנות.");
+              if (response.scope && !response.scope.includes("gmail.modify")) {
+                console.error("Gmail auth: token granted without gmail.modify scope",response.scope);
+                setGmailAuthError("ההתחברות הצליחה אבל לא אישרת את ההרשאה לקריאה ועריכה של Gmail (יכול להיות שהצ'קבוקס של \"קריאת המייל שלך וניהולו\" בוטל בזמן האישור). נסי להתחבר שוב ווודאי שכל ההרשאות מסומנות.");
                 return;
               }
               localStorage.setItem("gmail_token", response.access_token);
@@ -477,9 +487,119 @@ export default function App() {
     }
   };
 
-  const disconnectGmail = (message="") => { setGmailToken(null); localStorage.removeItem("gmail_token"); setEmailSummaries([]); setGmailAuthError(message); };
+  const disconnectGmail = (message="") => { setGmailToken(null); localStorage.removeItem("gmail_token"); setEmailSummaries([]); setGmailAuthError(message); setGmailLabels([]); };
 
   const editGmailClientId = () => { setGmailAuthError(""); setShowClientIdInput(true); };
+
+  // Gmail labels (folders) the "move out of inbox" feature can target — fetched
+  // once on connect and re-fetchable manually (e.g. after creating a label
+  // directly in Gmail itself, outside Taskup).
+  const fetchGmailLabels = async () => {
+    if (!gmailToken) return;
+    setLabelsLoading(true);
+    setLabelsError("");
+    try {
+      const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/labels", { headers: { Authorization: `Bearer ${gmailToken}` } });
+      if (res.status === 401) { disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש."); return; }
+      if (!res.ok) { setLabelsError("לא הצלחתי לטעון את התיקיות (תוויות) מ-Gmail."); return; }
+      const data = await res.json();
+      // Only "user" labels are useful move-targets — system labels like
+      // INBOX/SPAM/CATEGORY_* aren't real destination folders.
+      const userLabels = (data.labels || []).filter(l => l.type === "user").sort((a,b) => a.name.localeCompare(b.name, "he"));
+      setGmailLabels(userLabels);
+    } catch (e) {
+      console.error("fetchGmailLabels failed", e);
+      setLabelsError("שגיאה בטעינת התיקיות מ-Gmail.");
+    } finally {
+      setLabelsLoading(false);
+    }
+  };
+
+  // Ensures a rule's target label actually exists in Gmail, creating it on first
+  // use if it was set up as a "new label" choice. Self-heals on a 409 (name
+  // already taken — e.g. created directly in Gmail since) by looking it up
+  // instead of failing. Persists the resolved id onto the rule so this only
+  // has to happen once.
+  const ensureRuleLabel = async (rule) => {
+    if (rule.archiveLabelId) return rule.archiveLabelId;
+    if (!rule.archiveLabelName || !rule.archiveLabelName.trim()) return null;
+    try {
+      const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/labels", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${gmailToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ name: rule.archiveLabelName.trim(), labelListVisibility: "labelShow", messageListVisibility: "show" }),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        setGmailLabels(prev => [...prev, created].sort((a,b) => a.name.localeCompare(b.name, "he")));
+        setEmailRules(prev => { const next = prev.map(r => r.id === rule.id ? { ...r, archiveLabelId: created.id } : r); localStorage.setItem("email_rules", JSON.stringify(next)); return next; });
+        return created.id;
+      }
+      if (res.status === 409) {
+        const listRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/labels", { headers: { Authorization: `Bearer ${gmailToken}` } });
+        const listData = await listRes.json().catch(() => ({}));
+        const existing = (listData.labels || []).find(l => l.name === rule.archiveLabelName.trim());
+        if (existing) {
+          setEmailRules(prev => { const next = prev.map(r => r.id === rule.id ? { ...r, archiveLabelId: existing.id } : r); localStorage.setItem("email_rules", JSON.stringify(next)); return next; });
+          return existing.id;
+        }
+        return null;
+      }
+      if (res.status === 401) { disconnectGmail("החיבור לחשבון Gmail פג תוקף — התחברי מחדש."); return null; }
+      if (res.status === 403) { setArchiveErrorMsg("אין הרשאה ליצור תיקיות ב-Gmail — התנתקי והתחברי מחדש כדי לאשר הרשאת עריכה (לא רק קריאה)."); return null; }
+      return null;
+    } catch (e) {
+      console.error("ensureRuleLabel failed", e);
+      return null;
+    }
+  };
+
+  // Moves an entire Gmail thread out of the inbox and files it under a label —
+  // this is the actual "create folder + move mail there" action.
+  const archiveThreadToLabel = async (threadId, labelId) => {
+    if (!labelId) return false;
+    try {
+      const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}/modify`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${gmailToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ addLabelIds: [labelId], removeLabelIds: ["INBOX"] }),
+      });
+      if (res.status === 401) { disconnectGmail("החיבור לחשבון Gmail פג תוקף — התחברי מחדש."); return false; }
+      if (res.status === 403) { setArchiveErrorMsg("אין הרשאה להעביר מיילים ב-Gmail — התנתקי והתחברי מחדש כדי לאשר הרשאת עריכה (לא רק קריאה)."); return false; }
+      return res.ok;
+    } catch (e) {
+      console.error("archiveThreadToLabel failed", e);
+      return false;
+    }
+  };
+
+  // Manual per-email action on a summary card — moves just that one thread,
+  // using whatever label its rule is configured with (existing or newly
+  // created on first use), independent of whether the rule auto-archives.
+  const manualArchiveSummary = async (summary) => {
+    const rule = emailRules.find(r => r.id === summary.ruleId);
+    if (!rule || (!rule.archiveLabelId && !rule.archiveLabelName)) return;
+    setArchivingId(summary.id);
+    setArchiveErrorMsg("");
+    const labelId = await ensureRuleLabel(rule);
+    if (labelId) {
+      const ok = await archiveThreadToLabel(summary.id, labelId);
+      if (ok) setEmailSummaries(prev => prev.map(s => s.id === summary.id ? { ...s, archived: true } : s));
+      else setArchiveErrorMsg(prev => prev || "ההעברה לתיקייה נכשלה. נסי שוב בעוד רגע.");
+    }
+    setArchivingId(null);
+  };
+
+  // Refresh the label list whenever we (re)connect, so a newly-connected user
+  // (or one who just re-authed with the new scope) sees her folders right away.
+  // Deferred via setTimeout (same pattern as the Drive auto-backup effect below)
+  // so the fetch's setState calls happen outside the effect's synchronous body.
+  useEffect(() => {
+    if (!gmailToken) return;
+    const t = setTimeout(() => { fetchGmailLabels(); }, 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gmailToken]);
 
   const fetchAndSummarize = async () => {
     if (!gmailToken || emailRules.length === 0) return;
@@ -538,6 +658,12 @@ export default function App() {
         threadsFound += threads.length;
         ruleDebug.push(`${ruleLabel} → שאילתה: "${q}" → ${threads.length} תוצאות`);
 
+        // Resolve (or create, on first use) this rule's target Gmail label once
+        // per rule per sync, not once per thread — avoids redundant create calls.
+        const ruleLabelId = (rule.archiveAuto && threads.length && (rule.archiveLabelId || rule.archiveLabelName))
+          ? await ensureRuleLabel(rule)
+          : null;
+
         for (const thread of threads.slice(0, 3)) {
           const tRes = await fetch(
             `https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=full`,
@@ -586,7 +712,14 @@ export default function App() {
               console.error(`summarize-email error (${fmt})`, fmtErr); summarizeFailures++;
             }
           }
-          if (Object.keys(results).length) summaries.push({ id: thread.id, subject, sender, date, results, ruleId: rule.id });
+          if (Object.keys(results).length) {
+            // If this rule auto-archives, move the thread out of the inbox right
+            // away — a per-card "archived" badge (rather than a button) then
+            // shows it already happened; if it fails, the manual button below
+            // still lets her retry it individually.
+            const archived = ruleLabelId ? await archiveThreadToLabel(thread.id, ruleLabelId) : false;
+            summaries.push({ id: thread.id, subject, sender, date, results, ruleId: rule.id, archived });
+          }
         }
       } catch(e) {
         console.error(e);
@@ -1072,6 +1205,8 @@ export default function App() {
             gmailToken={gmailToken} connectGmail={connectGmail} disconnectGmail={disconnectGmail} gmailAuthError={gmailAuthError} setGmailAuthError={setGmailAuthError}
             emailRules={emailRules} saveEmailRules={saveEmailRules} newRule={newRule} setNewRule={setNewRule} showNewRule={showNewRule} setShowNewRule={setShowNewRule}
             emailLoading={emailLoading} fetchAndSummarize={fetchAndSummarize} emailStatusMsg={emailStatusMsg} emailSummaries={emailSummaries}
+            gmailLabels={gmailLabels} labelsLoading={labelsLoading} labelsError={labelsError} fetchGmailLabels={fetchGmailLabels}
+            archivingId={archivingId} archiveErrorMsg={archiveErrorMsg} setArchiveErrorMsg={setArchiveErrorMsg} manualArchiveSummary={manualArchiveSummary}
           />
         )}
 
