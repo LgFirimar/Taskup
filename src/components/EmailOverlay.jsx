@@ -30,7 +30,7 @@ export default function EmailOverlay({
           <button onClick={editGmailClientId} aria-label="שנה Client ID" style={{background:"none",border:"none",fontSize:12,color:"#999",cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginLeft:4}}>שנה Client ID</button>
         )}
         {gmailToken
-          ? <button onClick={disconnectGmail} style={{background:"none",border:"none",fontSize:12,color:"#e07070",cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>התנתק</button>
+          ? <button onClick={()=>disconnectGmail()} style={{background:"none",border:"none",fontSize:12,color:"#e07070",cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>התנתק</button>
           : <button onClick={connectGmail} style={{background:"#4285f4",color:"white",border:"none",borderRadius:10,padding:"6px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>התחבר ל-Gmail</button>
         }
       </div>
