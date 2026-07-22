@@ -19,11 +19,8 @@ compatibility_flags = ["nodejs_compat"]
 [triggers]
 crons = ["*/15 * * * *"]
 
-# KV namespace that stores each push subscription + its reminder schedule.
-# Uncomment once the namespace exists (Workers & Pages → KV → Create
-# namespace, e.g. name it "TASKUP_PUSH") and fill in its id below — until
-# then, /push/subscribe and /push/unsubscribe just return a "not configured"
-# error and the rest of the app is unaffected.
-# [[kv_namespaces]]
-# binding = "PUSH_KV"
-# id = "REPLACE_WITH_KV_NAMESPACE_ID"
+# KV namespace that stores each push subscription + its reminder schedule
+# (Storage & databases → KV → TASKUP_PUSH).
+[[kv_namespaces]]
+binding = "PUSH_KV"
+id = "966aa06a62074e38ae4c3043f3724569"
