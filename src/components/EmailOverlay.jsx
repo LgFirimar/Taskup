@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { uid, formatDate } from "../utils";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 const FORMAT_OPTIONS = [["bullets","• נקודות"],["summary","📝 סיכום"],["tasks","✅ משימות"],["dates","📅 תאריכים"]];
 const FORMAT_LABELS = Object.fromEntries(FORMAT_OPTIONS);
@@ -18,8 +19,12 @@ export default function EmailOverlay({
   emailLoading, fetchAndSummarize, emailStatusMsg, emailSummaries,
 }) {
   const [collapsedSections, setCollapsedSections] = useState({});
+  const containerRef = useRef(null);
+  // No onEscape — the client-ID and new-rule sub-forms already use Escape to
+  // cancel just themselves, so this only traps Tab focus within the overlay.
+  useFocusTrap(containerRef, true);
   return (
-    <div style={{position:"fixed",inset:0,background:"#f5f6fa",zIndex:200,direction:"rtl",display:"flex",flexDirection:"column",fontFamily:"'Heebo',sans-serif"}}>
+    <div ref={containerRef} role="dialog" aria-modal="true" aria-label="סיכומי מייל" tabIndex={-1} style={{position:"fixed",inset:0,background:"#f5f6fa",zIndex:200,direction:"rtl",display:"flex",flexDirection:"column",fontFamily:"'Heebo',sans-serif"}}>
       <div style={{background:"white",borderBottom:"1px solid #eeeef5",padding:"14px 20px",display:"flex",alignItems:"center",gap:12}}>
         <button className="back-btn" onClick={()=>setShowEmail(false)}>
           <svg width="22" height="16" viewBox="0 0 22 16" fill="none"><path d="M3 8H19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M13 2L19 8L13 14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>

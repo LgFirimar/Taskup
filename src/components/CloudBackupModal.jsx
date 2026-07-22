@@ -1,3 +1,6 @@
+import { useRef } from "react";
+import { useFocusTrap } from "../hooks/useFocusTrap";
+
 // Google Drive backup: connect once, then every change is backed up
 // automatically in the background (debounced). Also offers a manual
 // "backup now" and a "restore" that pulls the saved file back down.
@@ -12,9 +15,12 @@ export default function CloudBackupModal({
     ? new Date(lastBackupAt).toLocaleString("he-IL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
     : null;
 
+  const dialogRef = useRef(null);
+  useFocusTrap(dialogRef, true, ()=>setShowCloudBackup(false));
+
   return (
     <div className="alert-modal" onClick={()=>setShowCloudBackup(false)}>
-      <div className="alert-card" onClick={e=>e.stopPropagation()}>
+      <div className="alert-card" ref={dialogRef} role="dialog" aria-modal="true" aria-label="גיבוי ל-Google Drive" tabIndex={-1} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontSize:20}}>☁️</span>
           <span style={{fontWeight:700,fontSize:16,flex:1}}>גיבוי ל-Google Drive</span>

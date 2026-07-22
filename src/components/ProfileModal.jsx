@@ -1,13 +1,20 @@
+import { useRef } from "react";
+import { useFocusTrap } from "../hooks/useFocusTrap";
+
 // Full-screen profile picker / creation modal, shown when no profile is active
 // yet or the user opens "פרופיל חדש" from the profile menu.
 export default function ProfileModal({
   allProfiles, newProfileName, setNewProfileName, createProfile,
   setActiveProfileId, setActiveTab, setActiveSubtab, setShowProfileModal,
 }) {
+  const dialogRef = useRef(null);
+  // Only wire Escape-to-close when there's already a way to dismiss (i.e. not
+  // on first-launch, when a profile is mandatory to proceed).
+  useFocusTrap(dialogRef, true, allProfiles.length>0 ? ()=>setShowProfileModal(false) : undefined);
   return (
     <div dir="rtl" style={{minHeight:"100vh",background:"linear-gradient(135deg,#e8f5f0 0%,#eee8f8 100%)",fontFamily:"'Heebo',sans-serif",display:"flex",alignItems:"center",justifyContent:"center"}}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700&display=swap');*{box-sizing:border-box;}`}</style>
-      <div style={{background:"white",borderRadius:24,padding:36,width:360,boxShadow:"0 12px 48px rgba(100,100,160,0.16)"}}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="פרופיל" tabIndex={-1} style={{background:"white",borderRadius:24,padding:36,width:360,boxShadow:"0 12px 48px rgba(100,100,160,0.16)"}}>
         <div style={{textAlign:"center",marginBottom:16}}>
           <img src="/icon.png" alt="" style={{width:72,borderRadius:18,boxShadow:"0 4px 16px rgba(100,100,160,0.2)"}}/>
         </div>

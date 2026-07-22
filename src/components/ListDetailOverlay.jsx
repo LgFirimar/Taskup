@@ -1,3 +1,6 @@
+import { useRef } from "react";
+import { useFocusTrap } from "../hooks/useFocusTrap";
+
 // Full-screen detail view for a single shopping list or note, opened from the
 // lists menu or via voice command.
 export default function ListDetailOverlay({
@@ -7,8 +10,12 @@ export default function ListDetailOverlay({
   toggleShoppingItem, editingShoppingItem, setEditingShoppingItem, editShoppingItem, deleteShoppingItem,
   showBoughtItems, setShowBoughtItems, parseAndAddItems, parsingList,
 }) {
+  const containerRef = useRef(null);
+  // No onEscape — item-editing inputs already use Escape to cancel their own
+  // edit state, so this only traps Tab focus within the full-screen overlay.
+  useFocusTrap(containerRef, true);
   return (
-    <div style={{position:"fixed",inset:0,background:"white",zIndex:200,direction:"rtl",display:"flex",flexDirection:"column"}}>
+    <div ref={containerRef} role="dialog" aria-modal="true" aria-label={openList.name} tabIndex={-1} style={{position:"fixed",inset:0,background:"white",zIndex:200,direction:"rtl",display:"flex",flexDirection:"column"}}>
       <div style={{padding:"14px 20px",borderBottom:"1px solid #ebebea",display:"flex",alignItems:"center",gap:12,background:"white"}}>
         <button className="back-btn" onClick={()=>{setOpenListId(null);setOpenListType(null);setListItemInput("");}}>
           <svg width="28" height="22" viewBox="0 0 28 22" fill="none">

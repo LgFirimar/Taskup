@@ -1,3 +1,6 @@
+import { useRef } from "react";
+import { useFocusTrap } from "../hooks/useFocusTrap";
+
 // Popover shown from the shopping/notes side pills — lets you jump into an
 // existing list/note or create a new one.
 export default function ListsMenu({
@@ -5,9 +8,14 @@ export default function ListsMenu({
   setOpenListId, setOpenListType, showNewListInput, setShowNewListInput,
   newListName, setNewListName, addShoppingList, addNote,
 }) {
+  const dialogRef = useRef(null);
+  // No onEscape here — the "new list" sub-input already has its own Escape
+  // handling (cancel the input, keep the menu open); a container-level
+  // Escape would fight with that, so this only traps Tab focus.
+  useFocusTrap(dialogRef, true);
   return (
     <div style={{position:"fixed",inset:0,zIndex:190}} onClick={()=>{setShowListsMenu(null);setShowNewListInput(false);setNewListName("");}}>
-      <div style={{position:"absolute",bottom:96,left:24,background:"white",borderRadius:14,padding:16,minWidth:220,boxShadow:"0 4px 24px rgba(0,0,0,0.18)"}} onClick={e=>e.stopPropagation()}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={showListsMenu==="shopping"?"רשימות קניות":"פתקים"} tabIndex={-1} style={{position:"absolute",bottom:96,left:24,background:"white",borderRadius:14,padding:16,minWidth:220,boxShadow:"0 4px 24px rgba(0,0,0,0.18)"}} onClick={e=>e.stopPropagation()}>
         <div style={{fontWeight:700,fontSize:15,marginBottom:14}}>{showListsMenu==="shopping"?"🛒 רשימות קניות":"📝 פתקים"}</div>
         {(showListsMenu==="shopping"?shoppingLists:notesList).map(list=>(
           <button key={list.id} onClick={()=>{setOpenListId(list.id);setOpenListType(showListsMenu);setShowListsMenu(null);setShowNewListInput(false);}}

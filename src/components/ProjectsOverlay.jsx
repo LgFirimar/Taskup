@@ -1,3 +1,6 @@
+import { useRef } from "react";
+import { useFocusTrap } from "../hooks/useFocusTrap";
+
 // Full-screen "projects" feature: project list + a tabbed project detail view
 // (overview dashboard, tasks, timeline, brainstorm bubbles, inspiration board).
 export default function ProjectsOverlay({
@@ -14,8 +17,13 @@ export default function ProjectsOverlay({
   newBubbleText, setNewBubbleText, addBubble, deleteBubble, aiThinkBubbles, aiThinkingProj,
   newBoardText, setNewBoardText, addBoardItem, deleteBoardItem,
 }) {
+  const containerRef = useRef(null);
+  // No onEscape — several sub-forms here (new project, new timeline item,
+  // new subtask) already use Escape to cancel just themselves, so this only
+  // traps Tab focus within the full-screen overlay.
+  useFocusTrap(containerRef, true);
   return (
-    <div style={{position:"fixed",inset:0,background:"#f5f6fa",zIndex:200,direction:"rtl",display:"flex",flexDirection:"column",fontFamily:"'Heebo',sans-serif"}}>
+    <div ref={containerRef} role="dialog" aria-modal="true" aria-label="פרויקטים" tabIndex={-1} style={{position:"fixed",inset:0,background:"#f5f6fa",zIndex:200,direction:"rtl",display:"flex",flexDirection:"column",fontFamily:"'Heebo',sans-serif"}}>
       {/* Projects header */}
       <div style={{background:"white",borderBottom:"1px solid #eeeef5",padding:"14px 20px",display:"flex",alignItems:"center",gap:12}}>
         <button className="back-btn" onClick={()=>{setOpenProjectId(null);setShowProjects(openProjectId?true:false);}}>

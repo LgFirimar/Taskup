@@ -1,3 +1,5 @@
+import { useFocusTrap } from "../hooks/useFocusTrap";
+
 // Top-of-app header: greeting, profile switcher, settings menu, search bar
 // (with live results dropdown), and the tab bar.
 export default function AppHeader({
@@ -9,6 +11,10 @@ export default function AppHeader({
   tabs, activeTab, setActiveTab, setActiveSubtab, setDefaultTab, deleteTab,
   showNewTab, setShowNewTab, newTabInput, setNewTabInput, addTab,
 }) {
+  // profileMenuRef/settingsMenuRef already exist in App.jsx for outside-click
+  // detection — reused here to also trap Tab focus and close on Escape.
+  useFocusTrap(profileMenuRef, showProfileMenu, ()=>setShowProfileMenu(false));
+  useFocusTrap(settingsMenuRef, showSettingsMenu, ()=>setShowSettingsMenu(false));
   return (
     <div className="app-header">
       <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",paddingBottom:10}}>
@@ -22,7 +28,7 @@ export default function AppHeader({
               {profiles[activeProfileId]?.name?.charAt(0)||"?"}
             </button>
             {showProfileMenu&&(
-              <div className="dropdown-menu">
+              <div className="dropdown-menu" role="menu" aria-label="תפריט פרופיל">
                 {allProfiles.map(p=>(<button key={p.id} className="dropdown-item" style={{fontWeight:p.id===activeProfileId?600:400}} onClick={()=>switchProfile(p.id)}><span className="profile-avatar">{p.name.charAt(0)}</span>{p.name}{p.id===activeProfileId&&<span style={{marginRight:"auto",fontSize:12}}>✓</span>}</button>))}
                 <div className="dropdown-divider"/>
                 <button className="dropdown-item" onClick={()=>{setShowProfileMenu(false);setNewProfileName("");setShowProfileModal(true);}}>+ פרופיל חדש</button>
@@ -33,7 +39,7 @@ export default function AppHeader({
         <div ref={settingsMenuRef} style={{position:"relative"}}>
           <button onClick={()=>setShowSettingsMenu(p=>!p)} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:"#8a8a8a",padding:"4px 6px",borderRadius:6,lineHeight:1}} aria-label="הגדרות">⚙</button>
           {showSettingsMenu&&(
-            <div className="dropdown-menu settings-dropdown">
+            <div className="dropdown-menu settings-dropdown" role="menu" aria-label="הגדרות">
               <button className="dropdown-item" onClick={exportBackup}>📤 גיבוי</button>
               <button className="dropdown-item" onClick={importBackup}>📥 ייבוא גיבוי</button>
               <button className="dropdown-item" onClick={()=>{setShowSettingsMenu(false);setShowCloudBackup(true);}}>☁️ גיבוי ל-Google Drive</button>

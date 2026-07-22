@@ -1,3 +1,6 @@
+import { useRef } from "react";
+import { useFocusTrap } from "../hooks/useFocusTrap";
+
 // Voice commands cheat-sheet modal, plus the custom-voice-command
 // (aliases + shortcuts) management UI.
 export default function VoiceHelpModal({
@@ -6,9 +9,11 @@ export default function VoiceHelpModal({
   showAddVoiceCmd, setShowAddVoiceCmd,
   newVoiceCmd, setNewVoiceCmd, addVoiceCommand,
 }) {
+  const dialogRef = useRef(null);
+  useFocusTrap(dialogRef, true, ()=>setShowVoiceHelp(false));
   return (
     <div className="alert-modal" onClick={()=>setShowVoiceHelp(false)}>
-      <div className="alert-card" onClick={e=>e.stopPropagation()}>
+      <div className="alert-card" ref={dialogRef} role="dialog" aria-modal="true" aria-label="פקודות קוליות" tabIndex={-1} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontSize:20}}>🎙️</span>
           <span style={{fontWeight:700,fontSize:16,flex:1}}>פקודות קוליות</span>

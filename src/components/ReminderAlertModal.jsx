@@ -1,11 +1,15 @@
+import { useRef } from "react";
 import { formatDate } from "../utils";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 // Shown once on load if any reminder's alertDate has already arrived
 // (see computeInitialAlerts in utils.js).
 export default function ReminderAlertModal({ alertReminders, setShowAlertModal }) {
+  const dialogRef = useRef(null);
+  useFocusTrap(dialogRef, true, ()=>setShowAlertModal(false));
   return (
     <div className="alert-modal">
-      <div className="alert-card">
+      <div className="alert-card" ref={dialogRef} role="dialog" aria-modal="true" aria-label="תזכורות שממתינות לך" tabIndex={-1}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontSize:22}}>🔔</span>
           <span style={{fontWeight:700,fontSize:17}}>תזכורות שממתינות לך</span>
