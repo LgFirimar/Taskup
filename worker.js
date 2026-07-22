@@ -1,3 +1,6 @@
+// Deployed via Cloudflare Workers Builds (Git integration) — every push to
+// main on this repo now redeploys this Worker automatically.
+//
 // Allowed origins for browser requests. Cloudflare Pages serves both the
 // production URL and every preview deploy under *.pages.dev, so we allow the
 // whole subdomain rather than one fixed URL (which would break previews and
