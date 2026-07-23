@@ -106,13 +106,33 @@ export const buildGmailSearchQuery = (ruleLike) => {
     q += `from:${senderTerm} `;
   }
   if (ruleLike.subject) {
-    // Quote multi-word terms so Gmail matches the phrase, not each word separately.
-    const term = ruleLike.subject.includes(" ") ? `"${ruleLike.subject}"` : ruleLike.subject;
+    // Comma-separated keywords are alternatives ("match ANY of these"), not
+    // one long literal phrase — e.g. "SHEIN, H&M, Zara" should mean SHEIN OR
+    // H&M OR Zara, not the literal 17-character string "SHEIN, H&M, Zara"
+    // appearing verbatim somewhere in the email (which next to nothing will
+    // ever match). Each individual term still gets quoted if it has its own
+    // internal space (e.g. "daniella legacy"), so Gmail treats it as one
+    // phrase rather than requiring every word separately.
+    const terms = ruleLike.subject.split(",").map(s => s.trim()).filter(Boolean);
+    const quoted = terms.map(t => t.includes(" ") ? `"${t}"` : t);
+    const group = quoted.length > 1 ? `(${quoted.join(" OR ")})` : quoted[0];
     // scope "all" = also search the email body, not just the subject line.
-    q += ruleLike.searchScope === "all" ? `${term} ` : `subject:${term} `;
+    // Gmail supports grouping an OR-list right after a field prefix, e.g.
+    // subject:(SHEIN OR "H&M").
+    q += ruleLike.searchScope === "all" ? `${group} ` : `subject:${group} `;
   }
   return q.trim();
 };
+
+// Deep link into Gmail's own web/app view for a given thread or message id —
+// used wherever a card shows an email we didn't render the full original of
+// (summary cards, the הוראות log, the folder viewer), so there's always a
+// way to actually open and read it. #all matches regardless of which
+// label/view the mail is currently under (inbox, archived, moved by a rule,
+// etc). u/0 assumes the first signed-in Google account, which covers the
+// common single-account case; a multi-account user may need to switch
+// accounts first if this opens the wrong inbox.
+export const gmailWebUrl = (id) => `https://mail.google.com/mail/u/0/#all/${id}`;
 
 // "הוראות" — lightweight rules that ONLY sort-to-folder or trash matching
 // mail, with no AI summarization involved. Distinct from the summarization

@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import { gmailWebUrl } from "../utils";
 
 // Read-only history of mail processed by "הוראות" (sort/delete-only rules,
 // no AI summarization). Entries are prepended as they're created, so the
@@ -23,7 +24,12 @@ export default function EmailInstructionsLog({ accent, emailInstructionLog, onBa
         {emailInstructionLog.map(m=>(
           <div key={`${m.instructionId}:${m.id}`} style={{background:"white",borderRadius:12,padding:"12px 14px",marginBottom:8,boxShadow:"0 1px 6px rgba(0,0,0,0.05)"}}>
             <div style={{fontSize:11,color:"#6b6b6b",marginBottom:3}}>{m.sender} • {m.date?new Date(m.date).toLocaleDateString("he-IL",{day:"numeric",month:"short"}):""}</div>
-            <div style={{fontSize:13,fontWeight:600,color:"#1a1a2e",marginBottom:6}}>{m.subject}</div>
+            <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:6}}>
+              <div style={{fontSize:13,fontWeight:600,color:"#1a1a2e",flex:1}}>{m.subject}</div>
+              {m.id&&(
+                <a href={gmailWebUrl(m.id)} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:"#0077b6",fontWeight:700,whiteSpace:"nowrap",textDecoration:"none",flexShrink:0}}>📩 מייל מקורי</a>
+              )}
+            </div>
             <span style={{display:"inline-block",fontSize:11,fontWeight:700,borderRadius:8,padding:"3px 9px",background:m.action==="delete"?"#fef2f2":`${accent}18`,color:m.action==="delete"?"#b91c1c":accent}}>
               {m.action==="delete" ? "🗑️ נמחק" : `📁 ${m.labelName || "מוין"}`}
             </span>

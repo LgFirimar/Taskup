@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { EMAIL_FORMAT_LABELS, ruleFormats } from "../utils";
+import { EMAIL_FORMAT_LABELS, ruleFormats, gmailWebUrl } from "../utils";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 
 const TABS = [["new","חדשים"],["pending","⏳ ממתינות"],["done","✅ בוצעו"]];
@@ -61,7 +61,12 @@ export default function EmailRuleDetail({
           return (
             <div key={s.id||i} style={{background:"white",borderRadius:16,padding:"16px 18px",marginBottom:12,boxShadow:"0 1px 8px rgba(0,0,0,0.07)"}}>
               <div style={{fontSize:11,color:"#6b6b6b",marginBottom:4}}>{s.sender} • {s.date?new Date(s.date).toLocaleDateString("he-IL",{day:"numeric",month:"short"}):"" }</div>
-              <div style={{fontWeight:700,fontSize:14,marginBottom:10,color:"#1a1a2e"}}>{s.subject}</div>
+              <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:10}}>
+                <div style={{fontWeight:700,fontSize:14,color:"#1a1a2e",flex:1}}>{s.subject}</div>
+                {s.id&&(
+                  <a href={gmailWebUrl(s.id)} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:"#0077b6",fontWeight:700,whiteSpace:"nowrap",textDecoration:"none",flexShrink:0}}>📩 מייל מקורי</a>
+                )}
+              </div>
               {entries.map(([fmt,text],idx)=>{
                 const key = `${s.id||i}_${fmt}`;
                 const collapsed = !!collapsedSections[key];

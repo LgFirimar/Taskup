@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import { gmailWebUrl } from "../utils";
 
 // Read-only, live view of what's actually inside a Gmail label/folder —
 // fetched fresh from Gmail each time, not from anything Taskup tracked
@@ -32,7 +33,12 @@ export default function EmailFolderView({ accent, labelName, messages, loading, 
         {messages.map(m=>(
           <div key={m.id} style={{background:"white",borderRadius:12,padding:"12px 14px",marginBottom:8,boxShadow:"0 1px 6px rgba(0,0,0,0.05)"}}>
             <div style={{fontSize:11,color:"#6b6b6b",marginBottom:3}}>{m.sender} • {m.date?new Date(m.date).toLocaleDateString("he-IL",{day:"numeric",month:"short"}):""}</div>
-            <div style={{fontSize:13,fontWeight:600,color:"#1a1a2e"}}>{m.subject}</div>
+            <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
+              <div style={{fontSize:13,fontWeight:600,color:"#1a1a2e",flex:1}}>{m.subject}</div>
+              {m.id&&(
+                <a href={gmailWebUrl(m.id)} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:"#0077b6",fontWeight:700,whiteSpace:"nowrap",textDecoration:"none",flexShrink:0}}>📩 מייל מקורי</a>
+              )}
+            </div>
           </div>
         ))}
         {!loading&&!error&&messages.length===0&&(

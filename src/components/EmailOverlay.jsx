@@ -139,7 +139,7 @@ export default function EmailOverlay({
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               <input className="plain-input" style={{fontSize:13}} placeholder="שולח (לדוג' momence.com, אופציונלי)" value={newRule.sender} onChange={e=>setNewRule(p=>({...p,sender:e.target.value}))}/>
-              <input className="plain-input" style={{fontSize:13}} placeholder="מילות מפתח (בלי שולח — יחפש רק לפי המילים)" value={newRule.subject} onChange={e=>setNewRule(p=>({...p,subject:e.target.value}))}/>
+              <input className="plain-input" style={{fontSize:13}} placeholder="מילות מפתח, אפשר כמה מופרדות בפסיק = כל אחת בנפרד (בלי שולח — יחפש רק לפי המילים)" value={newRule.subject} onChange={e=>setNewRule(p=>({...p,subject:e.target.value}))}/>
               {newRule.subject&&(
                 <div style={{display:"flex",alignItems:"center",gap:8,background:"#f9f9f8",borderRadius:10,padding:"8px 12px"}}>
                   <label style={{fontSize:12,color:"#888",whiteSpace:"nowrap"}}>לחפש:</label>
@@ -251,7 +251,7 @@ export default function EmailOverlay({
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               <input className="plain-input" style={{fontSize:13}} placeholder="שולח (לדוג' newsletter.com, אופציונלי)" value={newInstruction.sender} onChange={e=>setNewInstruction(p=>({...p,sender:e.target.value}))}/>
-              <input className="plain-input" style={{fontSize:13}} placeholder="מילות מפתח (בלי שולח — יחפש רק לפי המילים)" value={newInstruction.subject} onChange={e=>setNewInstruction(p=>({...p,subject:e.target.value}))}/>
+              <input className="plain-input" style={{fontSize:13}} placeholder="מילות מפתח, אפשר כמה מופרדות בפסיק = כל אחת בנפרד (בלי שולח — יחפש רק לפי המילים)" value={newInstruction.subject} onChange={e=>setNewInstruction(p=>({...p,subject:e.target.value}))}/>
               {newInstruction.subject&&(
                 <div style={{display:"flex",alignItems:"center",gap:8,background:"#f9f9f8",borderRadius:10,padding:"8px 12px"}}>
                   <label style={{fontSize:12,color:"#888",whiteSpace:"nowrap"}}>לחפש:</label>
