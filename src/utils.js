@@ -93,32 +93,36 @@ export const ruleFormats = (rule) => (rule?.formats?.length ? rule.formats : [ru
 // "in:inbox" restriction — Gmail's default search already excludes
 // Spam/Trash, but still matches mail that's been archived out of the inbox
 // (a very common case once rules start moving things around).
+// Turns a comma-separated field value into a Gmail search term: one bare
+// term if there's only one, or a parenthesized OR-group if there are
+// several — e.g. "SHEIN, H&M, Zara" becomes (SHEIN OR H&M OR Zara), not one
+// long literal phrase (which next to nothing would ever match verbatim).
+// Any individual term with its own internal space (e.g. "daniella legacy")
+// still gets quoted, so Gmail treats it as one phrase rather than requiring
+// every word in it separately.
+const orGroup = (value) => {
+  const terms = value.split(",").map(s => s.trim()).filter(Boolean);
+  const quoted = terms.map(t => t.includes(" ") ? `"${t}"` : t);
+  return quoted.length > 1 ? `(${quoted.join(" OR ")})` : quoted[0];
+};
+
 export const buildGmailSearchQuery = (ruleLike) => {
   let q = "";
   if (ruleLike.dateAll) { /* no date filter */ }
   else if (ruleLike.dateFrom) { q += `after:${ruleLike.dateFrom.replace(/-/g,"/")} `; }
   else { q += "newer_than:30d "; }
   if (ruleLike.sender) {
-    // Quote multi-word senders (e.g. a display name) — otherwise Gmail
-    // treats "from:יוסי כהן" as from:יוסי AND a separate required word
-    // "כהן" anywhere in the email, which usually matches nothing.
-    const senderTerm = ruleLike.sender.includes(" ") ? `"${ruleLike.sender}"` : ruleLike.sender;
-    q += `from:${senderTerm} `;
+    // Comma-separated senders are alternatives too — e.g. "AliExpress,
+    // DoorDash" should match mail from either, not one literal string that's
+    // never a real sender. from:(...) is valid Gmail search syntax, same as
+    // subject:(...) below.
+    q += `from:${orGroup(ruleLike.sender)} `;
   }
   if (ruleLike.subject) {
-    // Comma-separated keywords are alternatives ("match ANY of these"), not
-    // one long literal phrase — e.g. "SHEIN, H&M, Zara" should mean SHEIN OR
-    // H&M OR Zara, not the literal 17-character string "SHEIN, H&M, Zara"
-    // appearing verbatim somewhere in the email (which next to nothing will
-    // ever match). Each individual term still gets quoted if it has its own
-    // internal space (e.g. "daniella legacy"), so Gmail treats it as one
-    // phrase rather than requiring every word separately.
-    const terms = ruleLike.subject.split(",").map(s => s.trim()).filter(Boolean);
-    const quoted = terms.map(t => t.includes(" ") ? `"${t}"` : t);
-    const group = quoted.length > 1 ? `(${quoted.join(" OR ")})` : quoted[0];
     // scope "all" = also search the email body, not just the subject line.
     // Gmail supports grouping an OR-list right after a field prefix, e.g.
     // subject:(SHEIN OR "H&M").
+    const group = orGroup(ruleLike.subject);
     q += ruleLike.searchScope === "all" ? `${group} ` : `subject:${group} `;
   }
   return q.trim();
