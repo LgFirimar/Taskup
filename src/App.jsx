@@ -848,14 +848,33 @@ export default function App() {
         const sender = headers.find(h=>h.name==="From")?.value || "";
         const date = headers.find(h=>h.name==="Date")?.value || "";
 
-        // Decode body
+        // Decode body. Gmail's body data is base64url without padding —
+        // atob() needs it re-padded to a multiple of 4 or it can throw on
+        // otherwise-valid data, so pad defensively rather than assume the
+        // browser's atob() is lenient about it.
+        const decodeBase64Url = (data) => {
+          try {
+            const b64 = data.replace(/-/g,"+").replace(/_/g,"/");
+            return atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4));
+          } catch (decodeErr) {
+            console.error("body part decode failed", decodeErr);
+            return "";
+          }
+        };
         const getBody = (part) => {
-          if (part.body?.data) return atob(part.body.data.replace(/-/g,"+").replace(/_/g,"/"));
+          if (part.body?.data) return decodeBase64Url(part.body.data);
           if (part.parts) return part.parts.map(getBody).join(" ");
           return "";
         };
         const rawBody = getBody(msg.payload);
-        const body = rawBody.replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
+        const cleanedBody = rawBody.replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
+        // Fallback for the (apparently not-so-rare) messages our own MIME
+        // walk fails to pull any text out of — e.g. body content that's only
+        // available via a separate attachment fetch we don't do, or unusual
+        // nesting. Gmail always includes a short plain-text `snippet` on the
+        // message resource regardless of MIME structure, so it's a reliable
+        // fallback rather than failing the summarization outright.
+        const body = cleanedBody || (msg.snippet || "").trim();
 
         // A rule can request several summary formats at once — each one is
         // its own AI call (the worker only knows how to produce one format
