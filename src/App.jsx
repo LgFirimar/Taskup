@@ -600,7 +600,13 @@ export default function App() {
       if (res.status === 409) {
         const listRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/labels", { headers: { Authorization: `Bearer ${gmailToken}` } });
         const listData = await listRes.json().catch(() => ({}));
-        return (listData.labels || []).find(l => l.name === name)?.id || null;
+        // Gmail enforces label-name uniqueness case-insensitively (can't have
+        // both "Work" and "work"), which is exactly why we got the 409 — so
+        // the lookup here has to match case-insensitively too, or a label
+        // that exists with different casing than what was typed would never
+        // be found, silently leaving labelId unset.
+        const lower = name.toLowerCase();
+        return (listData.labels || []).find(l => l.name.toLowerCase() === lower)?.id || null;
       }
       if (res.status === 401) { disconnectGmail("החיבור לחשבון Gmail פג תוקף — התחברי מחדש."); return null; }
       if (res.status === 403) { setArchiveErrorMsg("אין הרשאה ליצור תיקיות ב-Gmail — התנתקי והתחברי מחדש כדי לאשר הרשאת עריכה (לא רק קריאה)."); return null; }

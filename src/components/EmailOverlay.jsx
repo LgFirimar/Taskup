@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { uid, formatDate, EMAIL_FORMAT_OPTIONS, EMAIL_FORMAT_LABELS, ruleFormats, EMAIL_INSTRUCTION_ACTION_LABELS } from "../utils";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 
@@ -25,6 +25,17 @@ export default function EmailOverlay({
   // No onEscape — the client-ID and new-rule sub-forms already use Escape to
   // cancel just themselves, so this only traps Tab focus within the overlay.
   useFocusTrap(containerRef, true);
+
+  // Existing instructions render collapsed by default (just a one-line
+  // summary) — a long list of sort/delete rules was pushing the actually
+  // useful "sync now" button way down the page. Clicking a row's header
+  // expands it to reveal the full detail + edit/delete buttons.
+  const [expandedInstructionIds, setExpandedInstructionIds] = useState(() => new Set());
+  const toggleInstructionExpanded = (id) => setExpandedInstructionIds(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   const saveRule = () => {
     if(!newRule.sender&&!newRule.subject)return;
@@ -319,22 +330,40 @@ export default function EmailOverlay({
           </div>
         )}
 
-        {emailInstructions.map(instruction=>(
-          <div key={instruction.id} style={{background:"white",borderRadius:12,padding:"12px 14px",marginBottom:8,boxShadow:"0 1px 6px rgba(0,0,0,0.05)",display:"flex",alignItems:"center",gap:10,borderRight:"3px solid #888"}}>
-            <div style={{flex:1}}>
-              {instruction.sender&&<div style={{fontSize:13,fontWeight:600}}>מ: {instruction.sender}</div>}
-              {instruction.subject&&<div style={{fontSize:12,color:"#888"}}>מילות מפתח: {instruction.subject} ({instruction.searchScope==="all"?"כותרת+תוכן":"כותרת בלבד"})</div>}
-              <div style={{fontSize:11,color:"#555",marginTop:2}}>
-                {EMAIL_INSTRUCTION_ACTION_LABELS[instruction.action]}
-                {instruction.action==="folder"&&(gmailLabels.find(l=>l.id===instruction.labelId)?.name||instruction.labelName)&&` → "${gmailLabels.find(l=>l.id===instruction.labelId)?.name||instruction.labelName}"`}
-                {" • "}
-                {instruction.dateAll?"כל המיילים":instruction.dateFrom?`מ-${formatDate(instruction.dateFrom)}`:"30 ימים אחרונים"}
-              </div>
+        {emailInstructions.map(instruction=>{
+          const isExpanded = expandedInstructionIds.has(instruction.id);
+          const summary = [instruction.sender&&`מ: ${instruction.sender}`, instruction.subject&&`מילים: ${instruction.subject}`].filter(Boolean).join(" | ") || "(הוראה ללא תנאים)";
+          return (
+            <div key={instruction.id} style={{background:"white",borderRadius:12,marginBottom:8,boxShadow:"0 1px 6px rgba(0,0,0,0.05)",borderRight:"3px solid #888",overflow:"hidden"}}>
+              <button
+                onClick={()=>toggleInstructionExpanded(instruction.id)}
+                aria-expanded={isExpanded}
+                aria-label={isExpanded?"כווץ הוראה":"הרחב הוראה"}
+                style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background:"none",border:"none",cursor:"pointer",textAlign:"right",fontFamily:"'Heebo',sans-serif"}}
+              >
+                <span style={{flex:1,fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{summary}</span>
+                <span style={{fontSize:11,color:"#888",flexShrink:0}}>{EMAIL_INSTRUCTION_ACTION_LABELS[instruction.action]}</span>
+                <span style={{fontSize:12,color:"#8a8a8a",flexShrink:0,display:"inline-block",transition:"transform 0.15s",transform:isExpanded?"rotate(180deg)":"none"}}>▾</span>
+              </button>
+              {isExpanded&&(
+                <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 14px 12px"}}>
+                  <div style={{flex:1}}>
+                    {instruction.sender&&<div style={{fontSize:13,fontWeight:600}}>מ: {instruction.sender}</div>}
+                    {instruction.subject&&<div style={{fontSize:12,color:"#888"}}>מילות מפתח: {instruction.subject} ({instruction.searchScope==="all"?"כותרת+תוכן":"כותרת בלבד"})</div>}
+                    <div style={{fontSize:11,color:"#555",marginTop:2}}>
+                      {EMAIL_INSTRUCTION_ACTION_LABELS[instruction.action]}
+                      {instruction.action==="folder"&&(gmailLabels.find(l=>l.id===instruction.labelId)?.name||instruction.labelName)&&` → "${gmailLabels.find(l=>l.id===instruction.labelId)?.name||instruction.labelName}"`}
+                      {" • "}
+                      {instruction.dateAll?"כל המיילים":instruction.dateFrom?`מ-${formatDate(instruction.dateFrom)}`:"30 ימים אחרונים"}
+                    </div>
+                  </div>
+                  <button onClick={()=>{setNewInstruction({sender:"",subject:"",dateFrom:"",dateAll:false,...instruction});setShowNewInstruction(true);}} style={{background:"none",border:"none",color:"#8a8a8a",cursor:"pointer",fontSize:15}} aria-label="ערוך הוראה">✎</button>
+                  <button onClick={()=>saveEmailInstructions(emailInstructions.filter(r=>r.id!==instruction.id))} style={{background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:16}} aria-label="מחק הוראה">✕</button>
+                </div>
+              )}
             </div>
-            <button onClick={()=>{setNewInstruction({sender:"",subject:"",dateFrom:"",dateAll:false,...instruction});setShowNewInstruction(true);}} style={{background:"none",border:"none",color:"#8a8a8a",cursor:"pointer",fontSize:15}} aria-label="ערוך הוראה">✎</button>
-            <button onClick={()=>saveEmailInstructions(emailInstructions.filter(r=>r.id!==instruction.id))} style={{background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:16}} aria-label="מחק הוראה">✕</button>
-          </div>
-        ))}
+          );
+        })}
 
         {/* Fetch button */}
         {gmailToken&&(emailRules.length>0||emailInstructions.length>0)&&(
