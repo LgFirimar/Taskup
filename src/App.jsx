@@ -11,6 +11,7 @@ import EmailSummariesOverview from "./components/EmailSummariesOverview";
 import EmailRuleDetail from "./components/EmailRuleDetail";
 import EmailFolderView from "./components/EmailFolderView";
 import EmailInstructionsLog from "./components/EmailInstructionsLog";
+import EmailFoldersManager from "./components/EmailFoldersManager";
 import ProjectsOverlay from "./components/ProjectsOverlay";
 import VoiceHelpModal from "./components/VoiceHelpModal";
 import SidePills from "./components/SidePills";
@@ -166,6 +167,7 @@ export default function App() {
   const [folderLoading,setFolderLoading] = useState(false);
   const [folderError,setFolderError] = useState("");
   const [showInstructionsLog,setShowInstructionsLog] = useState(false); // "הוראות" processed-mail log
+  const [showFoldersManager,setShowFoldersManager] = useState(false); // rename/delete Gmail labels
 
   // Every one of these is written to be fully exclusive — it turns off every
   // OTHER email sub-page flag, not just turns on its own. Two of these
@@ -174,13 +176,14 @@ export default function App() {
   // focus (each pulling it back into its own container), which recurses
   // synchronously forever. Keep these as the only place that touches these
   // flags — never toggle showEmail/showEmailOverview/openRuleId/showRuleFolder/
-  // showInstructionsLog directly from a component.
-  const openEmailOverview = () => { setShowEmail(false); setShowEmailOverview(true); setOpenRuleId(null); setShowRuleFolder(false); setShowInstructionsLog(false); };
-  const goEmailAppHome = () => { setShowEmail(false); setShowEmailOverview(false); setOpenRuleId(null); setShowRuleFolder(false); setShowInstructionsLog(false); };
-  const goEmailHome = () => { setShowEmailOverview(false); setOpenRuleId(null); setShowRuleFolder(false); setShowInstructionsLog(false); setShowEmail(true); };
-  const openRuleDetail = (ruleId) => { setShowEmail(false); setShowEmailOverview(false); setOpenRuleId(ruleId); setShowRuleFolder(false); setShowInstructionsLog(false); };
+  // showInstructionsLog/showFoldersManager directly from a component.
+  const openEmailOverview = () => { setShowEmail(false); setShowEmailOverview(true); setOpenRuleId(null); setShowRuleFolder(false); setShowInstructionsLog(false); setShowFoldersManager(false); };
+  const goEmailAppHome = () => { setShowEmail(false); setShowEmailOverview(false); setOpenRuleId(null); setShowRuleFolder(false); setShowInstructionsLog(false); setShowFoldersManager(false); };
+  const goEmailHome = () => { setShowEmailOverview(false); setOpenRuleId(null); setShowRuleFolder(false); setShowInstructionsLog(false); setShowFoldersManager(false); setShowEmail(true); };
+  const openRuleDetail = (ruleId) => { setShowEmail(false); setShowEmailOverview(false); setOpenRuleId(ruleId); setShowRuleFolder(false); setShowInstructionsLog(false); setShowFoldersManager(false); };
   const closeRuleDetail = () => { setOpenRuleId(null); setShowRuleFolder(false); setShowEmail(false); setShowEmailOverview(true); };
-  const openInstructionsLog = () => { setShowEmail(false); setShowEmailOverview(false); setOpenRuleId(null); setShowRuleFolder(false); setShowInstructionsLog(true); };
+  const openInstructionsLog = () => { setShowEmail(false); setShowEmailOverview(false); setOpenRuleId(null); setShowRuleFolder(false); setShowInstructionsLog(true); setShowFoldersManager(false); };
+  const openFoldersManager = () => { setShowEmail(false); setShowEmailOverview(false); setOpenRuleId(null); setShowRuleFolder(false); setShowInstructionsLog(false); setShowFoldersManager(true); fetchGmailLabels(); };
 
   // ── Cloud backup (Google Drive) ───────────────────────────────────────────
   // Reuses the same Google Client ID as the Gmail feature (a Client ID isn't
@@ -626,6 +629,59 @@ export default function App() {
     const id = await resolveOrCreateLabel(instruction.labelName.trim());
     if (id) setEmailInstructions(prev => { const next = prev.map(r => r.id === instruction.id ? { ...r, labelId: id } : r); localStorage.setItem("email_instructions", JSON.stringify(next)); return next; });
     return id;
+  };
+
+  // Renames a Gmail label in place (labels.patch — partial update, only the
+  // name field is sent). Updates the local gmailLabels cache on success, plus
+  // any rule/instruction that had snapshotted the old name at creation time,
+  // so renames show up everywhere immediately rather than only after a
+  // manual "🔄 רענני" of the labels list.
+  const renameGmailLabel = async (labelId, newName) => {
+    const trimmed = (newName || "").trim();
+    if (!trimmed) return false;
+    try {
+      const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/labels/${labelId}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${gmailToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (res.status === 401) { disconnectGmail("החיבור לחשבון Gmail פג תוקף — התחברי מחדש."); return false; }
+      if (res.status === 409) { setArchiveErrorMsg(`כבר קיימת תיקייה בשם "${trimmed}".`); return false; }
+      if (res.status === 403) { setArchiveErrorMsg("אין הרשאה לשנות תיקיות ב-Gmail — התנתקי והתחברי מחדש כדי לאשר הרשאת עריכה (לא רק קריאה)."); return false; }
+      if (!res.ok) { setArchiveErrorMsg("שינוי השם נכשל — נסי שוב."); return false; }
+      setGmailLabels(prev => prev.map(l => l.id === labelId ? { ...l, name: trimmed } : l).sort((a,b) => a.name.localeCompare(b.name, "he")));
+      setEmailRules(prev => { const next = prev.map(r => r.archiveLabelId === labelId ? { ...r, archiveLabelName: trimmed } : r); localStorage.setItem("email_rules", JSON.stringify(next)); return next; });
+      setEmailInstructions(prev => { const next = prev.map(r => r.labelId === labelId ? { ...r, labelName: trimmed } : r); localStorage.setItem("email_instructions", JSON.stringify(next)); return next; });
+      return true;
+    } catch (e) {
+      console.error("renameGmailLabel failed", e);
+      setArchiveErrorMsg("שגיאה בשינוי שם התיקייה.");
+      return false;
+    }
+  };
+
+  // Deletes a Gmail label entirely (the mail inside it is NOT deleted — it
+  // just loses that label, same as deleting a folder-only label in Gmail
+  // itself). Any rule/instruction still pointing at it keeps its old id —
+  // the next sync attempt to move mail there will just fail silently via
+  // archiveThreadToLabel's normal !res.ok path, same as any other Gmail
+  // error; the user can re-point the rule at a different folder.
+  const deleteGmailLabel = async (labelId) => {
+    try {
+      const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/labels/${labelId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${gmailToken}` },
+      });
+      if (res.status === 401) { disconnectGmail("החיבור לחשבון Gmail פג תוקף — התחברי מחדש."); return false; }
+      if (res.status === 403) { setArchiveErrorMsg("אין הרשאה למחוק תיקיות ב-Gmail — התנתקי והתחברי מחדש כדי לאשר הרשאת עריכה (לא רק קריאה)."); return false; }
+      if (!res.ok && res.status !== 404) { setArchiveErrorMsg("מחיקת התיקייה נכשלה — נסי שוב."); return false; }
+      setGmailLabels(prev => prev.filter(l => l.id !== labelId));
+      return true;
+    } catch (e) {
+      console.error("deleteGmailLabel failed", e);
+      setArchiveErrorMsg("שגיאה במחיקת התיקייה.");
+      return false;
+    }
   };
 
   // Moves an entire Gmail thread out of the inbox and files it under a label —
@@ -1436,6 +1492,7 @@ export default function App() {
             showNewInstruction={showNewInstruction} setShowNewInstruction={setShowNewInstruction}
             ensureInstructionLabel={ensureInstructionLabel}
             onOpenInstructionsLog={openInstructionsLog}
+            onOpenFoldersManager={openFoldersManager}
           />
         )}
 
@@ -1494,6 +1551,21 @@ export default function App() {
           <EmailInstructionsLog
             accent={accent}
             emailInstructionLog={emailInstructionLog}
+            onBackToEmailHome={goEmailHome}
+            onAppHome={goEmailAppHome}
+          />
+        )}
+
+        {/* Email overlay — rename/delete Gmail folders (labels) directly */}
+        {showFoldersManager&&(
+          <EmailFoldersManager
+            accent={accent}
+            gmailLabels={gmailLabels}
+            labelsLoading={labelsLoading}
+            labelsError={labelsError}
+            onRefresh={fetchGmailLabels}
+            onRename={renameGmailLabel}
+            onDelete={deleteGmailLabel}
             onBackToEmailHome={goEmailHome}
             onAppHome={goEmailAppHome}
           />

@@ -19,6 +19,7 @@ export default function EmailOverlay({
   emailInstructions, saveEmailInstructions, newInstruction, setNewInstruction,
   showNewInstruction, setShowNewInstruction, ensureInstructionLabel,
   onOpenInstructionsLog,
+  onOpenFoldersManager,
 }) {
   const containerRef = useRef(null);
   // No onEscape — the client-ID and new-rule sub-forms already use Escape to
@@ -117,7 +118,11 @@ export default function EmailOverlay({
         )}
         {/* Log of mail processed by sort/delete-only "הוראות" */}
         {emailInstructions.length>0&&(
-          <button onClick={onOpenInstructionsLog} style={{width:"100%",background:"white",border:"1.5px solid #888",borderRadius:14,padding:"12px 0",fontSize:14,fontWeight:700,color:"#555",cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:20}}>📋 הוראות</button>
+          <button onClick={onOpenInstructionsLog} style={{width:"100%",background:"white",border:"1.5px solid #888",borderRadius:14,padding:"12px 0",fontSize:14,fontWeight:700,color:"#555",cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:gmailLabels.length>0?10:20}}>📋 הוראות</button>
+        )}
+        {/* Rename/delete the Gmail folders themselves */}
+        {gmailLabels.length>0&&(
+          <button onClick={onOpenFoldersManager} style={{width:"100%",background:"white",border:"1.5px solid #888",borderRadius:14,padding:"12px 0",fontSize:14,fontWeight:700,color:"#555",cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:20}}>📁 ניהול תיקיות</button>
         )}
 
         {/* Rules */}
@@ -220,7 +225,7 @@ export default function EmailOverlay({
               </div>
               {(rule.archiveLabelId||rule.archiveLabelName)&&(
                 <div style={{fontSize:11,color:"#0077b6",marginTop:2}}>
-                  📥 {rule.archiveAuto?"מועבר אוטומטית לתיקיית":"אפשרות להעביר לתיקיית"} "{rule.archiveLabelName||gmailLabels.find(l=>l.id===rule.archiveLabelId)?.name||"?"}"
+                  📥 {rule.archiveAuto?"מועבר אוטומטית לתיקיית":"אפשרות להעביר לתיקיית"} "{gmailLabels.find(l=>l.id===rule.archiveLabelId)?.name||rule.archiveLabelName||"?"}"
                 </div>
               )}
             </div>
@@ -321,7 +326,7 @@ export default function EmailOverlay({
               {instruction.subject&&<div style={{fontSize:12,color:"#888"}}>מילות מפתח: {instruction.subject} ({instruction.searchScope==="all"?"כותרת+תוכן":"כותרת בלבד"})</div>}
               <div style={{fontSize:11,color:"#555",marginTop:2}}>
                 {EMAIL_INSTRUCTION_ACTION_LABELS[instruction.action]}
-                {instruction.action==="folder"&&(instruction.labelName||gmailLabels.find(l=>l.id===instruction.labelId)?.name)&&` → "${instruction.labelName||gmailLabels.find(l=>l.id===instruction.labelId)?.name}"`}
+                {instruction.action==="folder"&&(gmailLabels.find(l=>l.id===instruction.labelId)?.name||instruction.labelName)&&` → "${gmailLabels.find(l=>l.id===instruction.labelId)?.name||instruction.labelName}"`}
                 {" • "}
                 {instruction.dateAll?"כל המיילים":instruction.dateFrom?`מ-${formatDate(instruction.dateFrom)}`:"30 ימים אחרונים"}
               </div>
