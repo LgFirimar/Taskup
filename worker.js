@@ -393,7 +393,12 @@ export default {
       return new Response("Not found", { status: 404, headers });
     } catch (err) {
       console.error(err);
-      return new Response(JSON.stringify({ error: "Something went wrong processing that request. Please try again." }), {
+      // This is a personal, single-user app (not a public multi-tenant
+      // service), so there's no real audience to leak internals to — showing
+      // the actual error (e.g. "Anthropic API error 401: ...", "...529
+      // Overloaded...") is far more useful for troubleshooting from the phone,
+      // with no access to these Worker logs, than a generic message.
+      return new Response(JSON.stringify({ error: (err.message || "Something went wrong processing that request. Please try again.").slice(0, 300) }), {
         status: 502,
         headers: { ...headers, "content-type": "application/json" },
       });

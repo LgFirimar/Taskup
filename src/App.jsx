@@ -795,6 +795,7 @@ export default function App() {
     let failures = 0;
     let authExpired = false;
     let debugLine = "";
+    const failureDetails = [];
     try {
       const q = buildGmailSearchQuery(rule);
 
@@ -869,7 +870,13 @@ export default function App() {
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ subject, sender, body: body.slice(0,3000), format: fmt }),
             });
-            if (!sumRes.ok) { console.error(`summarize-email failed (${fmt}): ${sumRes.status}`); failures++; continue; }
+            if (!sumRes.ok) {
+              let detail = "";
+              try { const errBody = await sumRes.json(); detail = errBody?.error || ""; } catch { /* not JSON */ }
+              console.error(`summarize-email failed (${fmt}): ${sumRes.status}`, detail);
+              failureDetails.push(`${fmt}: HTTP ${sumRes.status}${detail?` — ${detail}`:""}`);
+              failures++; continue;
+            }
             const sumData = await sumRes.json();
             // Defense in depth: the worker already retries+falls back on an
             // empty AI completion, but if an older worker deploy is still
@@ -878,7 +885,13 @@ export default function App() {
               ? sumData.result
               : "לא התקבל תוכן עבור הפורמט הזה. נסי לגבות שוב.";
           } catch (fmtErr) {
-            console.error(`summarize-email error (${fmt})`, fmtErr); failures++;
+            // A thrown fetch (as opposed to a non-ok response) almost always
+            // means the request never reached the worker at all — a CORS
+            // rejection or a network failure — which reads very differently
+            // to someone debugging this than "the AI failed to summarize".
+            console.error(`summarize-email error (${fmt})`, fmtErr);
+            failureDetails.push(`${fmt}: ${fmtErr.message || "בקשת הרשת נכשלה (ייתכן חסימת CORS)"}`);
+            failures++;
           }
         }
         if (Object.keys(results).length) {
@@ -894,7 +907,7 @@ export default function App() {
       failures++;
       debugLine = `${ruleLabel} → שגיאה: ${e.message}`;
     }
-    return { newEntries, threadsFoundCount, failures, debugLine, authExpired };
+    return { newEntries, threadsFoundCount, failures, debugLine, authExpired, failureDetails };
   };
 
   // Does the actual search+trash/sort work for ONE "הוראה" — mirrors
@@ -964,12 +977,14 @@ export default function App() {
     let threadsFound = 0;
     let summarizeFailures = 0;
     const ruleDebug = [];
+    const summarizeFailureDetails = [];
     for (const rule of emailRules) {
       const result = await runRuleSync(rule, existingKeys);
       if (result.authExpired) { authExpired = true; break; }
       threadsFound += result.threadsFoundCount;
       summarizeFailures += result.failures;
       if (result.debugLine) ruleDebug.push(result.debugLine);
+      if (result.failureDetails?.length) summarizeFailureDetails.push(...result.failureDetails);
       result.newEntries.forEach(e => existingKeys.add(`${e.ruleId}:${e.id}`));
       allNew.push(...result.newEntries);
     }
@@ -995,7 +1010,13 @@ export default function App() {
           msg = "לא נמצאו מיילים תואמים לחוקים. בדקי שהשולח/הנושא מדויקים, או סמני \"כל המיילים\" בעריכת החוק — כברירת מחדל מחפשים רק 30 ימים אחורה.\n\nפירוט לפי חוק:\n"
             + ruleDebug.map(d=>`• ${d}`).join("\n");
         } else if (summarizeFailures > 0) {
-          msg = "נמצאו מיילים תואמים, אבל הסיכום נכשל. נסי שוב בעוד רגע — אם זה ממשיך לקרות ייתכן שיש בעיה בשרת הסיכום.";
+          // Surface the actual failure (HTTP status / server error / thrown
+          // network error) instead of a generic "something failed" — this is
+          // the only way to tell a rate limit, a CORS rejection, and an AI
+          // error on the worker apart from the phone, with no server logs.
+          msg = "נמצאו מיילים תואמים, אבל הסיכום נכשל.\n\nפירוט:\n"
+            + [...new Set(summarizeFailureDetails)].slice(0,5).map(d=>`• ${d}`).join("\n")
+            + "\n\nנסי שוב בעוד רגע — אם זה ממשיך לקרות, שלחי את הפירוט הזה.";
         } else {
           msg = "נמצאו מיילים תואמים, אבל כבר נסרקו קודם — אין חדש. אפשר לראות אותם ב\"מיילים מסוכמים\".";
         }
