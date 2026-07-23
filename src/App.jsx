@@ -882,7 +882,17 @@ export default function App() {
         // under its own collapsible heading instead of one merged blob.
         const formats = rule.formats?.length ? rule.formats : [rule.format || "bullets"];
         const results = {};
-        for (const fmt of formats) {
+        if (!body) {
+          // Both our own MIME walk AND Gmail's own snippet came up empty —
+          // this is a message with genuinely no extractable text (e.g. a
+          // purely image/attachment email), not something an AI call can fix
+          // no matter how many times it's retried. Show that plainly per
+          // format — as a normal completed result, not an error — instead of
+          // spending an AI call on it. If this is what was actually behind
+          // the "Missing body" failures, it'll show up as this message on
+          // the rule's page instead of the red error banner.
+          for (const fmt of formats) results[fmt] = "אין תוכן טקסטואלי במייל הזה לסיכום (המייל מבוסס כנראה כולו על תמונה/קובץ מצורף).";
+        } else for (const fmt of formats) {
           try {
             const sumRes = await fetch(`${WORKER_URL}/summarize-email`, {
               method: "POST",

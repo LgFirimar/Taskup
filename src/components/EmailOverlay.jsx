@@ -358,6 +358,13 @@ export default function EmailOverlay({
             <button onClick={()=>setArchiveErrorMsg("")} style={{background:"none",border:"none",color:"#b91c1c",cursor:"pointer",fontSize:14,flexShrink:0}} aria-label="סגור">✕</button>
           </div>
         )}
+
+        {/* Build stamp — lets a screenshot answer "is this the latest deploy?"
+            on its own, without a round trip to figure out whether a reported
+            "nothing changed" is a stale cache or an actual unfixed bug. */}
+        <div style={{fontSize:10,color:"#bbb",textAlign:"center",marginTop:8}}>
+          גרסה: {typeof __BUILD_TIME__!=="undefined" ? new Date(__BUILD_TIME__).toLocaleString("he-IL",{dateStyle:"short",timeStyle:"short"}) : "?"}
+        </div>
       </div>
     </div>
   );

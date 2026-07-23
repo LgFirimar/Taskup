@@ -4,6 +4,13 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Stamped once, at build time on whatever platform actually runs `vite
+  // build` for a deploy (Cloudflare Pages/Vercel/etc.) — lets a screenshot of
+  // the running app answer "is this actually the latest deploy?" on its own,
+  // instead of guessing from stale-cache symptoms across several round trips.
+  define: {
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+  },
   plugins: [
     react(),
     VitePWA({
