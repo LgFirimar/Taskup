@@ -786,6 +786,47 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gmailToken]);
 
+  // Fetches EVERY thread matching each of several independent Gmail search
+  // queries (see buildGmailSearchQueries) — not just the first page. A
+  // rule/instruction is supposed to catch everything matching it, however
+  // much has piled up in the mailbox, not just the newest handful; capping
+  // to one page per query meant a real backlog just sat there forever
+  // (each sync only ever saw the same first 5-10 results, already-synced
+  // ones got skipped, and anything past that page was never reached at
+  // all). Paginates each query at Gmail's own max page size (100) up to a
+  // generous but finite number of pages — purely an infinite-loop guard,
+  // not a real limit any personal mailbox should ever approach.
+  const MAX_PAGES_PER_QUERY = 50;
+  const fetchAllMatchingThreads = async (queries) => {
+    const threadMap = new Map();
+    const queryDebugParts = [];
+    for (const q of queries) {
+      let pageToken;
+      let pages = 0;
+      let foundForQuery = 0;
+      do {
+        const url = `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=100${pageToken?`&pageToken=${encodeURIComponent(pageToken)}`:""}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${gmailToken}` } });
+        if (res.status === 401) return { threadMap, queryDebugParts, authExpired: true };
+        if (res.status === 403) {
+          // 403 almost always means Gmail API access itself is blocked — not a
+          // bad query. Surface Google's own error message instead of a bare code.
+          let detail = "";
+          try { const errBody = await res.json(); detail = errBody?.error?.message || ""; } catch { /* ignore parse failure */ }
+          throw new Error(`אין הרשאה (403)${detail?`: ${detail}`:""} — ודאי ש-Gmail API מופעל בפרויקט ב-Google Cloud Console, ושאישרת את הרשאת קריאת המייל בזמן ההתחברות.`);
+        }
+        if (!res.ok) throw new Error(`Gmail search failed: ${res.status}`);
+        const data = await res.json();
+        (data.threads || []).forEach(t => threadMap.set(t.id, t));
+        foundForQuery += (data.threads || []).length;
+        pageToken = data.nextPageToken;
+        pages++;
+      } while (pageToken && pages < MAX_PAGES_PER_QUERY);
+      queryDebugParts.push(`"${q}" → ${foundForQuery}`);
+    }
+    return { threadMap, queryDebugParts, authExpired: false };
+  };
+
   // Does the actual search+fetch+summarize+auto-archive work for ONE rule.
   // Threads already present in `existingKeys` (i.e. already synced before, in
   // ANY status — untouched/pending/done) are skipped entirely: no re-fetch,
@@ -804,35 +845,14 @@ export default function App() {
     const failureDetails = [];
     try {
       // Several independent queries (one per sender/keyword alternative,
-      // see buildGmailSearchQueries) instead of one combined OR-group query
-      // — merge their results (deduped by thread id) below.
-      const queries = buildGmailSearchQueries(rule);
-      const threadMap = new Map();
-      const queryDebugParts = [];
-      for (const q of queries) {
-        const searchRes = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=5`,
-          { headers: { Authorization: `Bearer ${gmailToken}` } }
-        );
-        if (searchRes.status === 401) {
-          disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי לסכם שוב.");
-          authExpired = true;
-          return { newEntries, threadsFoundCount, failures, debugLine, authExpired };
-        }
-        if (searchRes.status === 403) {
-          // 403 almost always means Gmail API access itself is blocked — not a bad
-          // query. Surface Google's own error message (e.g. "Gmail API has not been
-          // used in project ... before or it is disabled", or "Request had
-          // insufficient authentication scopes") instead of a bare status code.
-          let detail = "";
-          try { const errBody = await searchRes.json(); detail = errBody?.error?.message || ""; } catch { /* ignore parse failure */ }
-          throw new Error(`אין הרשאה (403)${detail?`: ${detail}`:""} — ודאי ש-Gmail API מופעל בפרויקט ב-Google Cloud Console, ושאישרת את הרשאת קריאת המייל בזמן ההתחברות.`);
-        }
-        if (!searchRes.ok) throw new Error(`Gmail search failed: ${searchRes.status}`);
-        const searchData = await searchRes.json();
-        const found = searchData.threads || [];
-        found.forEach(t => threadMap.set(t.id, t));
-        queryDebugParts.push(`"${q}" → ${found.length}`);
+      // see buildGmailSearchQueries) instead of one combined OR-group
+      // query, each fully paginated — merge their results (deduped by
+      // thread id) below.
+      const { threadMap, queryDebugParts, authExpired: searchAuthExpired } = await fetchAllMatchingThreads(buildGmailSearchQueries(rule));
+      if (searchAuthExpired) {
+        disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי לסכם שוב.");
+        authExpired = true;
+        return { newEntries, threadsFoundCount, failures, debugLine, authExpired };
       }
       const threads = Array.from(threadMap.values());
       threadsFoundCount = threads.length;
@@ -849,6 +869,11 @@ export default function App() {
         ? await ensureRuleLabel(rule)
         : null;
 
+      // Unlike an instruction (plain sort/delete, no cost), a rule calls the
+      // AI summarizer per email — so this is intentionally still capped per
+      // sync (a big backlog gets worked through gradually, a few emails at
+      // a time per "🔄 סכמי מיילים עכשיו" click) even though the SEARCH
+      // above is no longer capped and now finds the whole backlog.
       for (const thread of freshThreads.slice(0, 3)) {
         const tRes = await fetch(
           `https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=full`,
@@ -966,25 +991,15 @@ export default function App() {
     const label = [instruction.sender&&`מ: ${instruction.sender}`, instruction.subject&&`מילים: ${instruction.subject}`].filter(Boolean).join(" | ") || "(הוראה ללא תנאים)";
     try {
       // Several independent queries (one per sender/keyword alternative,
-      // see buildGmailSearchQueries) instead of one combined OR-group query
-      // — merge their results (deduped by thread id) below.
-      const queries = buildGmailSearchQueries(instruction);
-      const threadMap = new Map();
-      const queryDebugParts = [];
-      for (const q of queries) {
-        const searchRes = await fetch(
-          `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=10`,
-          { headers: { Authorization: `Bearer ${gmailToken}` } }
-        );
-        if (searchRes.status === 401) {
-          disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי שוב.");
-          return { newLogEntries, failures, debugLine, authExpired: true };
-        }
-        if (!searchRes.ok) throw new Error(`Gmail search failed: ${searchRes.status}`);
-        const searchData = await searchRes.json();
-        const found = searchData.threads || [];
-        found.forEach(t => threadMap.set(t.id, t));
-        queryDebugParts.push(`"${q}" → ${found.length}`);
+      // see buildGmailSearchQueries) instead of one combined OR-group
+      // query, each fully paginated — merge their results (deduped by
+      // thread id) below. No AI cost here (plain sort/delete), so unlike a
+      // rule's summarization step, every fresh match below gets processed
+      // in the same sync — not just a handful.
+      const { threadMap, queryDebugParts, authExpired: searchAuthExpired } = await fetchAllMatchingThreads(buildGmailSearchQueries(instruction));
+      if (searchAuthExpired) {
+        disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי שוב.");
+        return { newLogEntries, failures, debugLine, authExpired: true };
       }
       const threads = Array.from(threadMap.values());
       const freshThreads = threads.filter(t => !existingKeys.has(`${instruction.id}:${t.id}`));
