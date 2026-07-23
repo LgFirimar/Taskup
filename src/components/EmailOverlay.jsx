@@ -26,10 +26,12 @@ export default function EmailOverlay({
   // cancel just themselves, so this only traps Tab focus within the overlay.
   useFocusTrap(containerRef, true);
 
-  // Existing instructions render collapsed by default (just a one-line
-  // summary) — a long list of sort/delete rules was pushing the actually
-  // useful "sync now" button way down the page. Clicking a row's header
-  // expands it to reveal the full detail + edit/delete buttons.
+  // The whole existing-instructions list starts collapsed behind one toggle
+  // button — a long list of sort/delete rules was pushing the actually
+  // useful "sync now" button way down the page. Individual rows can then
+  // further expand (once the list itself is open) to reveal full detail +
+  // edit/delete buttons for just that one instruction.
+  const [showInstructionsList, setShowInstructionsList] = useState(false);
   const [expandedInstructionIds, setExpandedInstructionIds] = useState(() => new Set());
   const toggleInstructionExpanded = (id) => setExpandedInstructionIds(prev => {
     const next = new Set(prev);
@@ -67,6 +69,11 @@ export default function EmailOverlay({
     if (toSave.action==="folder"&&!toSave.labelId&&toSave.labelName) ensureInstructionLabel(toSave);
     setNewInstruction({sender:"",subject:"",action:"folder"});
     setShowNewInstruction(false);
+    // Open the (possibly still-collapsed) list right away so saving actually
+    // shows the result, and expand just the saved/edited row so she can
+    // confirm at a glance what was saved without an extra click.
+    setShowInstructionsList(true);
+    setExpandedInstructionIds(prev => new Set(prev).add(toSave.id));
   };
 
   return (
@@ -254,6 +261,17 @@ export default function EmailOverlay({
         </div>
         <div style={{fontSize:11,color:"#8a8a8a",marginTop:-8,marginBottom:12}}>מיילים תואמים יעברו לתיקייה או יימחקו — בלי סיכום. אפשר לראות מה טופל בדף "📋 הוראות".</div>
 
+        {emailInstructions.length>0&&(
+          <button
+            onClick={()=>setShowInstructionsList(v=>!v)}
+            aria-expanded={showInstructionsList}
+            style={{width:"100%",background:"none",border:"1.5px solid #dde",borderRadius:12,color:"#555",padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:12,display:"flex",alignItems:"center",justifyContent:"space-between"}}
+          >
+            <span>הוראות קיימות ({emailInstructions.length})</span>
+            <span style={{display:"inline-block",transition:"transform 0.15s",transform:showInstructionsList?"rotate(180deg)":"none"}}>▾</span>
+          </button>
+        )}
+
         {showNewInstruction&&(
           <div style={{background:"white",borderRadius:14,padding:16,marginBottom:12,boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
@@ -330,7 +348,7 @@ export default function EmailOverlay({
           </div>
         )}
 
-        {emailInstructions.map(instruction=>{
+        {showInstructionsList&&emailInstructions.map(instruction=>{
           const isExpanded = expandedInstructionIds.has(instruction.id);
           const summary = [instruction.sender&&`מ: ${instruction.sender}`, instruction.subject&&`מילים: ${instruction.subject}`].filter(Boolean).join(" | ") || "(הוראה ללא תנאים)";
           return (
