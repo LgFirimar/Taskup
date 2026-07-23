@@ -26,7 +26,7 @@ import { useVoiceCommands } from "./hooks/useVoiceCommands";
 import { usePushNotifications } from "./hooks/usePushNotifications";
 import {
   uid, STORAGE_KEY, WORKER_URL, PRIO_CYCLE, TAB_COLORS, DEFAULT_GMAIL_CLIENT_ID,
-  today, getReminderStatus, loadStorage, computeInitialAlerts, buildGmailSearchQuery,
+  today, getReminderStatus, loadStorage, computeInitialAlerts, buildGmailSearchQueries,
 } from "./utils";
 
 export default function App() {
@@ -803,31 +803,40 @@ export default function App() {
     let debugLine = "";
     const failureDetails = [];
     try {
-      const q = buildGmailSearchQuery(rule);
-
-      const searchRes = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=5`,
-        { headers: { Authorization: `Bearer ${gmailToken}` } }
-      );
-      if (searchRes.status === 401) {
-        disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי לסכם שוב.");
-        authExpired = true;
-        return { newEntries, threadsFoundCount, failures, debugLine, authExpired };
+      // Several independent queries (one per sender/keyword alternative,
+      // see buildGmailSearchQueries) instead of one combined OR-group query
+      // — merge their results (deduped by thread id) below.
+      const queries = buildGmailSearchQueries(rule);
+      const threadMap = new Map();
+      const queryDebugParts = [];
+      for (const q of queries) {
+        const searchRes = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=5`,
+          { headers: { Authorization: `Bearer ${gmailToken}` } }
+        );
+        if (searchRes.status === 401) {
+          disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי לסכם שוב.");
+          authExpired = true;
+          return { newEntries, threadsFoundCount, failures, debugLine, authExpired };
+        }
+        if (searchRes.status === 403) {
+          // 403 almost always means Gmail API access itself is blocked — not a bad
+          // query. Surface Google's own error message (e.g. "Gmail API has not been
+          // used in project ... before or it is disabled", or "Request had
+          // insufficient authentication scopes") instead of a bare status code.
+          let detail = "";
+          try { const errBody = await searchRes.json(); detail = errBody?.error?.message || ""; } catch { /* ignore parse failure */ }
+          throw new Error(`אין הרשאה (403)${detail?`: ${detail}`:""} — ודאי ש-Gmail API מופעל בפרויקט ב-Google Cloud Console, ושאישרת את הרשאת קריאת המייל בזמן ההתחברות.`);
+        }
+        if (!searchRes.ok) throw new Error(`Gmail search failed: ${searchRes.status}`);
+        const searchData = await searchRes.json();
+        const found = searchData.threads || [];
+        found.forEach(t => threadMap.set(t.id, t));
+        queryDebugParts.push(`"${q}" → ${found.length}`);
       }
-      if (searchRes.status === 403) {
-        // 403 almost always means Gmail API access itself is blocked — not a bad
-        // query. Surface Google's own error message (e.g. "Gmail API has not been
-        // used in project ... before or it is disabled", or "Request had
-        // insufficient authentication scopes") instead of a bare status code.
-        let detail = "";
-        try { const errBody = await searchRes.json(); detail = errBody?.error?.message || ""; } catch { /* ignore parse failure */ }
-        throw new Error(`אין הרשאה (403)${detail?`: ${detail}`:""} — ודאי ש-Gmail API מופעל בפרויקט ב-Google Cloud Console, ושאישרת את הרשאת קריאת המייל בזמן ההתחברות.`);
-      }
-      if (!searchRes.ok) throw new Error(`Gmail search failed: ${searchRes.status}`);
-      const searchData = await searchRes.json();
-      const threads = searchData.threads || [];
+      const threads = Array.from(threadMap.values());
       threadsFoundCount = threads.length;
-      debugLine = `${ruleLabel} → שאילתה: "${q}" → ${threads.length} תוצאות`;
+      debugLine = `${ruleLabel} → ${queryDebugParts.join(" | ")} → סה"כ ${threads.length} תוצאות`;
 
       // Skip threads we've already synced before (in any status) — this is
       // what makes a sync incremental instead of re-summarizing (and
@@ -956,20 +965,30 @@ export default function App() {
     let debugLine = "";
     const label = [instruction.sender&&`מ: ${instruction.sender}`, instruction.subject&&`מילים: ${instruction.subject}`].filter(Boolean).join(" | ") || "(הוראה ללא תנאים)";
     try {
-      const q = buildGmailSearchQuery(instruction);
-      const searchRes = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=10`,
-        { headers: { Authorization: `Bearer ${gmailToken}` } }
-      );
-      if (searchRes.status === 401) {
-        disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי שוב.");
-        return { newLogEntries, failures, debugLine, authExpired: true };
+      // Several independent queries (one per sender/keyword alternative,
+      // see buildGmailSearchQueries) instead of one combined OR-group query
+      // — merge their results (deduped by thread id) below.
+      const queries = buildGmailSearchQueries(instruction);
+      const threadMap = new Map();
+      const queryDebugParts = [];
+      for (const q of queries) {
+        const searchRes = await fetch(
+          `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=10`,
+          { headers: { Authorization: `Bearer ${gmailToken}` } }
+        );
+        if (searchRes.status === 401) {
+          disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי שוב.");
+          return { newLogEntries, failures, debugLine, authExpired: true };
+        }
+        if (!searchRes.ok) throw new Error(`Gmail search failed: ${searchRes.status}`);
+        const searchData = await searchRes.json();
+        const found = searchData.threads || [];
+        found.forEach(t => threadMap.set(t.id, t));
+        queryDebugParts.push(`"${q}" → ${found.length}`);
       }
-      if (!searchRes.ok) throw new Error(`Gmail search failed: ${searchRes.status}`);
-      const searchData = await searchRes.json();
-      const threads = searchData.threads || [];
+      const threads = Array.from(threadMap.values());
       const freshThreads = threads.filter(t => !existingKeys.has(`${instruction.id}:${t.id}`));
-      debugLine = `${label} → "${q}" → ${threads.length} תוצאות, ${freshThreads.length} חדשות`;
+      debugLine = `${label} → ${queryDebugParts.join(" | ")} → סה"כ ${threads.length} תוצאות, ${freshThreads.length} חדשות`;
 
       let labelId = null;
       if (instruction.action === "folder") {

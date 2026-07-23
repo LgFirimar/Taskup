@@ -87,45 +87,58 @@ export const EMAIL_FORMAT_LABELS = Object.fromEntries(EMAIL_FORMAT_OPTIONS);
 // string — this reads either shape back as an array so old rules keep working.
 export const ruleFormats = (rule) => (rule?.formats?.length ? rule.formats : [rule?.format || "bullets"]);
 
-// Builds a Gmail search query string from a rule/instruction's matching
+// Turns a comma-separated field value into a list of individual match
+// terms, trimmed, with empty entries (stray/double commas) dropped.
+const splitTerms = (value) => (value || "").split(",").map(s => s.trim()).filter(Boolean);
+
+// A term is safe to send to Gmail bare only if it's made entirely of
+// characters Gmail's query parser is guaranteed to treat as one
+// unsplittable token (word characters, @, ., -). Anything else — a space,
+// an ampersand, other punctuation — risks Gmail's tokenizer breaking the
+// term into separate words instead of matching it as one literal string.
+// Quoting forces Gmail to treat it as a single exact phrase regardless.
+const atomicTerm = (term) => /^[\w@.-]+$/.test(term) ? term : `"${term}"`;
+
+// Builds Gmail search query strings from a rule/instruction's matching
 // fields (sender/keywords/date range) — shared between summarization rules
 // and "הוראות" instructions, since both match mail the same way. Note: no
 // "in:inbox" restriction — Gmail's default search already excludes
 // Spam/Trash, but still matches mail that's been archived out of the inbox
 // (a very common case once rules start moving things around).
-// Turns a comma-separated field value into a Gmail search term: one bare
-// term if there's only one, or a parenthesized OR-group if there are
-// several — e.g. "SHEIN, H&M, Zara" becomes (SHEIN OR H&M OR Zara), not one
-// long literal phrase (which next to nothing would ever match verbatim).
-// Any individual term with its own internal space (e.g. "daniella legacy")
-// still gets quoted, so Gmail treats it as one phrase rather than requiring
-// every word in it separately.
-const orGroup = (value) => {
-  const terms = value.split(",").map(s => s.trim()).filter(Boolean);
-  const quoted = terms.map(t => t.includes(" ") ? `"${t}"` : t);
-  return quoted.length > 1 ? `(${quoted.join(" OR ")})` : quoted[0];
-};
-
-export const buildGmailSearchQuery = (ruleLike) => {
-  let q = "";
+//
+// Returns an ARRAY, not a single string. A comma-separated field with
+// several alternatives (e.g. "AliExpress, DoorDash, H&M") used to be
+// packed into one from:(A OR B OR C) query, but real-world testing showed
+// Gmail's handling of such groups is unreliable once a term has a special
+// character or the group gets long — "H&M" in particular would silently
+// never match as part of an OR-group, even though from:H&M / from:"H&M"
+// on its own works fine. Running one simple, single-term query PER
+// alternative instead — and merging the resulting thread ids client-side —
+// sidesteps all of that: every individual query is as simple as Gmail
+// search gets, so there's no grouping/tokenizing ambiguity left for Gmail
+// to get wrong.
+export const buildGmailSearchQueries = (ruleLike) => {
+  let dateQ = "";
   if (ruleLike.dateAll) { /* no date filter */ }
-  else if (ruleLike.dateFrom) { q += `after:${ruleLike.dateFrom.replace(/-/g,"/")} `; }
-  else { q += "newer_than:30d "; }
-  if (ruleLike.sender) {
-    // Comma-separated senders are alternatives too — e.g. "AliExpress,
-    // DoorDash" should match mail from either, not one literal string that's
-    // never a real sender. from:(...) is valid Gmail search syntax, same as
-    // subject:(...) below.
-    q += `from:${orGroup(ruleLike.sender)} `;
+  else if (ruleLike.dateFrom) { dateQ = `after:${ruleLike.dateFrom.replace(/-/g,"/")} `; }
+  else { dateQ = "newer_than:30d "; }
+
+  const senderTerms = splitTerms(ruleLike.sender);
+  const subjectTerms = splitTerms(ruleLike.subject);
+  // scope "all" = also search the email body, not just the subject line.
+  const subjectPrefix = ruleLike.searchScope === "all" ? "" : "subject:";
+
+  const senderBranches = senderTerms.length ? senderTerms.map(t => `from:${atomicTerm(t)} `) : [""];
+  const subjectBranches = subjectTerms.length ? subjectTerms.map(t => `${subjectPrefix}${atomicTerm(t)} `) : [""];
+
+  const queries = [];
+  for (const s of senderBranches) {
+    for (const k of subjectBranches) {
+      if (!s && !k) continue; // neither sender nor subject set at all — nothing to search on
+      queries.push((dateQ + s + k).trim());
+    }
   }
-  if (ruleLike.subject) {
-    // scope "all" = also search the email body, not just the subject line.
-    // Gmail supports grouping an OR-list right after a field prefix, e.g.
-    // subject:(SHEIN OR "H&M").
-    const group = orGroup(ruleLike.subject);
-    q += ruleLike.searchScope === "all" ? `${group} ` : `subject:${group} `;
-  }
-  return q.trim();
+  return queries;
 };
 
 // Deep link into Gmail's own web/app view for a given thread or message id —
