@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useFocusTrap } from "../hooks/useFocusTrap";
-import { gmailWebUrl } from "../utils";
+import OriginalEmailLink from "./OriginalEmailLink";
 
 // Read-only history of mail processed by "הוראות" (sort/delete-only rules,
 // no AI summarization). Entries are prepended as they're created, so the
@@ -117,9 +117,7 @@ export default function EmailInstructionsLog({ accent, emailInstructionLog, emai
                                   <div style={{fontSize:11,color:"#6b6b6b",marginBottom:3}}>{m.sender} • {m.date?new Date(m.date).toLocaleDateString("he-IL",{day:"numeric",month:"short"}):""} • <span style={{color:isDelete?"#b91c1c":"#0077b6"}}>{actionLabel}</span></div>
                                   <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
                                     <div style={{fontSize:13,fontWeight:600,color:"#1a1a2e",flex:1}}>{m.subject}</div>
-                                    {m.id&&(
-                                      <a href={gmailWebUrl(m.id,m.messageId)} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:"#0077b6",fontWeight:700,whiteSpace:"nowrap",textDecoration:"none",flexShrink:0}}>📩 מייל מקורי</a>
-                                    )}
+                                    <OriginalEmailLink id={m.id} messageId={m.messageId}/>
                                   </div>
                                 </div>
                               );
