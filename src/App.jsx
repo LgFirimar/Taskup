@@ -120,6 +120,12 @@ export default function App() {
   // ── Email integration ─────────────────────────────────────────────────────
   const [showEmail,setShowEmail] = useState(false);
   const [gmailToken,setGmailToken] = useState(()=>localStorage.getItem("gmail_token")||null);
+  // When the current token expires (ms epoch) — Google's implicit OAuth
+  // flow only ever hands out short-lived (~1h) access tokens with no
+  // refresh token, so this is what a background timer (below) watches to
+  // proactively mint a new one silently before that happens, instead of
+  // always waiting to be kicked out mid-sync.
+  const [gmailTokenExpiresAt,setGmailTokenExpiresAt] = useState(()=>{ const v=localStorage.getItem("gmail_token_expires_at"); return v?Number(v):null; });
   const [emailRules,setEmailRules] = useState(()=>{ try{return JSON.parse(localStorage.getItem("email_rules"))||[];}catch{return[];} });
   // Persisted across reloads (unlike before) so marking an email done/pending
   // and the "only show what hasn't been handled yet" view survive a refresh.
@@ -128,6 +134,12 @@ export default function App() {
   const [emailSummaries,setEmailSummaries] = useState(()=>{ try{return JSON.parse(localStorage.getItem("email_summaries"))||[];}catch{return[];} });
   const [emailLoading,setEmailLoading] = useState(false);
   const [emailStatusMsg,setEmailStatusMsg] = useState("");
+  // What syncEmail is doing RIGHT NOW — shown next to the spinner while
+  // emailLoading is true, e.g. "בודקת הוראה 3 מתוך 11: מ: shanibar". A big
+  // "כל המיילים" backlog can take a while (every sender/keyword alternative
+  // is its own paginated Gmail search — see buildGmailSearchQueries), so
+  // without this the button just sits there spinning with no feedback.
+  const [emailSyncProgress,setEmailSyncProgress] = useState("");
   const [showNewRule,setShowNewRule] = useState(false);
   const [newRule,setNewRule] = useState({sender:"",subject:"",formats:["bullets"]});
   // A manual override (saved per-browser) always wins; otherwise fall back to
@@ -483,6 +495,20 @@ export default function App() {
   const saveEmailRules = (rules) => { setEmailRules(rules); localStorage.setItem("email_rules", JSON.stringify(rules)); };
   const saveEmailInstructions = (list) => { setEmailInstructions(list); localStorage.setItem("email_instructions", JSON.stringify(list)); };
 
+  // Persists a freshly (re)issued token + when it expires, from either an
+  // interactive connectGmail() or a silent background refresh.
+  const applyGmailToken = (response) => {
+    localStorage.setItem("gmail_token", response.access_token);
+    setGmailToken(response.access_token);
+    // expires_in is seconds from now (Google's implicit-flow tokens are
+    // typically ~3599s / just under an hour) — no refresh token is ever
+    // issued in this flow, so this is purely for the silent-refresh timer
+    // below to know when to try minting a new one.
+    const expiresAt = Date.now() + (Number(response.expires_in) || 3500) * 1000;
+    localStorage.setItem("gmail_token_expires_at", String(expiresAt));
+    setGmailTokenExpiresAt(expiresAt);
+  };
+
   const connectGmail = () => {
     const clientId = gmailClientId.trim();
     if (!clientId) { setShowClientIdInput(true); return; }
@@ -508,8 +534,7 @@ export default function App() {
                 setGmailAuthError("ההתחברות הצליחה אבל לא אישרת את ההרשאה לקריאה ועריכה של Gmail (יכול להיות שהצ'קבוקס של \"קריאת המייל שלך וניהולו\" בוטל בזמן האישור). נסי להתחבר שוב ווודאי שכל ההרשאות מסומנות.");
                 return;
               }
-              localStorage.setItem("gmail_token", response.access_token);
-              setGmailToken(response.access_token);
+              applyGmailToken(response);
               setGmailAuthError("");
             } else {
               console.error("Gmail auth: no access_token in response",response);
@@ -549,10 +574,60 @@ export default function App() {
     }
   };
 
+  // Best-effort background token refresh: Google's implicit OAuth flow only
+  // ever hands out short-lived (~1h) tokens with no refresh token, so a long
+  // sync (or just leaving the tab open) used to always end in a hard
+  // disconnect + "sign in again" once the hour was up. `prompt: ""` asks
+  // Google to reissue a token WITHOUT showing any UI if the browser still
+  // has an active, consented Google session — this can silently keep the
+  // connection alive. It's genuinely best-effort, not guaranteed: some
+  // browsers (notably Safari/iOS, thanks to cross-site cookie restrictions)
+  // block the silent iframe this relies on, in which case it just quietly
+  // does nothing and the existing "expired — reconnect" flow is the
+  // fallback, same as before this existed.
+  const refreshGmailTokenSilently = () => {
+    if (!gmailToken || !window.google?.accounts?.oauth2) return;
+    const clientId = gmailClientId.trim();
+    if (!clientId) return;
+    try {
+      const client = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: "https://www.googleapis.com/auth/gmail.modify",
+        callback: (response) => {
+          if (response.access_token) applyGmailToken(response);
+          // No error surfaced on failure — this runs silently in the
+          // background; a genuinely expired token still gets caught (and
+          // the user told to reconnect) the next time an API call 401s.
+        },
+        error_callback: () => { /* silent — see comment above */ },
+      });
+      client.requestAccessToken({ prompt: "" });
+    } catch (err) {
+      console.error("Gmail silent token refresh failed", err);
+    }
+  };
+
+  // Checks every couple of minutes whether the current token is close to
+  // expiring and, if so, tries the silent refresh above — proactively,
+  // instead of only reacting after a request has already failed with 401
+  // (which is what used to cut off an in-progress sync partway through).
+  useEffect(() => {
+    if (!gmailToken) return;
+    const REFRESH_MARGIN_MS = 6 * 60 * 1000; // try when within 6 minutes of expiry
+    const check = () => {
+      if (!gmailTokenExpiresAt) return;
+      if (Date.now() >= gmailTokenExpiresAt - REFRESH_MARGIN_MS) refreshGmailTokenSilently();
+    };
+    check();
+    const interval = setInterval(check, 2 * 60 * 1000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gmailToken, gmailTokenExpiresAt]);
+
   // Note: emailSummaries (and the done/pending marks on them) are intentionally
   // NOT cleared here — they're a persisted local record of what's been
   // triaged, independent of whether Gmail happens to be connected right now.
-  const disconnectGmail = (message="") => { setGmailToken(null); localStorage.removeItem("gmail_token"); setGmailAuthError(message); setGmailLabels([]); };
+  const disconnectGmail = (message="") => { setGmailToken(null); localStorage.removeItem("gmail_token"); setGmailTokenExpiresAt(null); localStorage.removeItem("gmail_token_expires_at"); setGmailAuthError(message); setGmailLabels([]); };
 
   const editGmailClientId = () => { setGmailAuthError(""); setShowClientIdInput(true); };
 
@@ -842,6 +917,7 @@ export default function App() {
     let failures = 0;
     let authExpired = false;
     let debugLine = "";
+    let searchCompleted = false;
     const failureDetails = [];
     try {
       // Several independent queries (one per sender/keyword alternative,
@@ -857,6 +933,11 @@ export default function App() {
       const threads = Array.from(threadMap.values());
       threadsFoundCount = threads.length;
       debugLine = `${ruleLabel} → ${queryDebugParts.join(" | ")} → סה"כ ${threads.length} תוצאות`;
+      // The SEARCH itself (the part that gets slower the more history piles
+      // up) is done at this point regardless of what happens below — lets
+      // the caller advance this rule's watermark even if an individual
+      // thread's summarization later fails.
+      searchCompleted = true;
 
       // Skip threads we've already synced before (in any status) — this is
       // what makes a sync incremental instead of re-summarizing (and
@@ -976,7 +1057,7 @@ export default function App() {
       failures++;
       debugLine = `${ruleLabel} → שגיאה: ${e.message}`;
     }
-    return { newEntries, threadsFoundCount, failures, debugLine, authExpired, failureDetails };
+    return { newEntries, threadsFoundCount, failures, debugLine, authExpired, failureDetails, searchCompleted };
   };
 
   // Does the actual search+trash/sort work for ONE "הוראה" — mirrors
@@ -988,6 +1069,7 @@ export default function App() {
     let failures = 0;
     let authExpired = false;
     let debugLine = "";
+    let searchCompleted = false;
     const label = [instruction.sender&&`מ: ${instruction.sender}`, instruction.subject&&`מילים: ${instruction.subject}`].filter(Boolean).join(" | ") || "(הוראה ללא תנאים)";
     try {
       // Several independent queries (one per sender/keyword alternative,
@@ -999,11 +1081,16 @@ export default function App() {
       const { threadMap, queryDebugParts, authExpired: searchAuthExpired } = await fetchAllMatchingThreads(buildGmailSearchQueries(instruction));
       if (searchAuthExpired) {
         disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי שוב.");
-        return { newLogEntries, failures, debugLine, authExpired: true };
+        return { newLogEntries, failures, debugLine, authExpired: true, searchCompleted };
       }
       const threads = Array.from(threadMap.values());
       const freshThreads = threads.filter(t => !existingKeys.has(`${instruction.id}:${t.id}`));
       debugLine = `${label} → ${queryDebugParts.join(" | ")} → סה"כ ${threads.length} תוצאות, ${freshThreads.length} חדשות`;
+      // The SEARCH itself (the part that gets slower the more history piles
+      // up) is done at this point regardless of what happens below — lets
+      // the caller advance this instruction's watermark even if an
+      // individual thread's trash/move action later fails.
+      searchCompleted = true;
 
       let labelId = null;
       if (instruction.action === "folder") {
@@ -1032,14 +1119,16 @@ export default function App() {
       failures++;
       debugLine = `${label} → שגיאה: ${e.message}`;
     }
-    return { newLogEntries, failures, debugLine, authExpired };
+    return { newLogEntries, failures, debugLine, authExpired, searchCompleted };
   };
 
   const syncEmail = async () => {
     if (!gmailToken || (emailRules.length === 0 && emailInstructions.length === 0)) return;
     setEmailLoading(true);
     setEmailStatusMsg("");
+    setEmailSyncProgress("");
     let authExpired = false;
+    const nowIso = new Date().toISOString();
 
     const existingKeys = new Set(emailSummaries.map(s => `${s.ruleId}:${s.id}`));
     const allNew = [];
@@ -1047,7 +1136,15 @@ export default function App() {
     let summarizeFailures = 0;
     const ruleDebug = [];
     const summarizeFailureDetails = [];
-    for (const rule of emailRules) {
+    // Accumulated locally (not re-read from React state each iteration) so
+    // every rule's lastSyncedAt update survives to the final save below,
+    // instead of each iteration's setEmailRules call clobbering the one
+    // before it.
+    let updatedRules = emailRules;
+    for (let i = 0; i < emailRules.length; i++) {
+      const rule = emailRules[i];
+      const ruleLabel = [rule.sender&&`מ: ${rule.sender}`, rule.subject&&`מילים: ${rule.subject}`].filter(Boolean).join(" | ") || "(חוק ללא תנאים)";
+      setEmailSyncProgress(`בודקת חוק ${i+1} מתוך ${emailRules.length}: ${ruleLabel}`);
       const result = await runRuleSync(rule, existingKeys);
       if (result.authExpired) { authExpired = true; break; }
       threadsFound += result.threadsFoundCount;
@@ -1056,22 +1153,35 @@ export default function App() {
       if (result.failureDetails?.length) summarizeFailureDetails.push(...result.failureDetails);
       result.newEntries.forEach(e => existingKeys.add(`${e.ruleId}:${e.id}`));
       allNew.push(...result.newEntries);
+      // Advance this rule's watermark once its SEARCH has fully completed
+      // (see buildGmailSearchQueries) — regardless of whether an individual
+      // email's summarization failed — so the next sync only has to look at
+      // mail newer than this one, not re-list the whole backlog again.
+      if (result.searchCompleted) updatedRules = updatedRules.map(r => r.id===rule.id ? {...r, lastSyncedAt: nowIso} : r);
     }
     if (allNew.length) setEmailSummaries(prev => [...prev, ...allNew]);
+    if (updatedRules !== emailRules) saveEmailRules(updatedRules);
 
     let instructionsProcessed = 0;
     if (!authExpired) {
       const existingInstructionKeys = new Set(emailInstructionLog.map(e => `${e.instructionId}:${e.id}`));
       const allNewLog = [];
-      for (const instruction of emailInstructions) {
+      let updatedInstructions = emailInstructions;
+      for (let i = 0; i < emailInstructions.length; i++) {
+        const instruction = emailInstructions[i];
+        const instrLabel = [instruction.sender&&`מ: ${instruction.sender}`, instruction.subject&&`מילים: ${instruction.subject}`].filter(Boolean).join(" | ") || "(הוראה ללא תנאים)";
+        setEmailSyncProgress(`בודקת הוראה ${i+1} מתוך ${emailInstructions.length}: ${instrLabel}`);
         const result = await runInstructionSync(instruction, existingInstructionKeys);
         if (result.authExpired) { authExpired = true; break; }
         result.newLogEntries.forEach(e => existingInstructionKeys.add(`${e.instructionId}:${e.id}`));
         allNewLog.push(...result.newLogEntries);
+        if (result.searchCompleted) updatedInstructions = updatedInstructions.map(r => r.id===instruction.id ? {...r, lastSyncedAt: nowIso} : r);
       }
       if (allNewLog.length) { setEmailInstructionLog(prev => [...allNewLog, ...prev]); instructionsProcessed = allNewLog.length; }
+      if (updatedInstructions !== emailInstructions) saveEmailInstructions(updatedInstructions);
     }
 
+    setEmailSyncProgress("");
     if (!authExpired) {
       let msg = "";
       if (emailRules.length > 0 && allNew.length === 0) {
@@ -1108,6 +1218,9 @@ export default function App() {
     const result = await runRuleSync(rule, existingKeys);
     if (!result.authExpired && result.newEntries.length) {
       setEmailSummaries(prev => [...prev, ...result.newEntries]);
+    }
+    if (result.searchCompleted) {
+      saveEmailRules(emailRules.map(r => r.id===rule.id ? {...r, lastSyncedAt: new Date().toISOString()} : r));
     }
     setRuleSyncingId(null);
   };
@@ -1573,7 +1686,7 @@ export default function App() {
             gmailClientId={gmailClientId} setGmailClientId={setGmailClientId} showClientIdInput={showClientIdInput} setShowClientIdInput={setShowClientIdInput} editGmailClientId={editGmailClientId}
             gmailToken={gmailToken} connectGmail={connectGmail} disconnectGmail={disconnectGmail} gmailAuthError={gmailAuthError} setGmailAuthError={setGmailAuthError}
             emailRules={emailRules} saveEmailRules={saveEmailRules} newRule={newRule} setNewRule={setNewRule} showNewRule={showNewRule} setShowNewRule={setShowNewRule}
-            emailLoading={emailLoading} fetchAndSummarize={syncEmail} emailStatusMsg={emailStatusMsg}
+            emailLoading={emailLoading} fetchAndSummarize={syncEmail} emailStatusMsg={emailStatusMsg} emailSyncProgress={emailSyncProgress}
             gmailLabels={gmailLabels} labelsLoading={labelsLoading} labelsError={labelsError} fetchGmailLabels={fetchGmailLabels} ensureRuleLabel={ensureRuleLabel}
             archiveErrorMsg={archiveErrorMsg} setArchiveErrorMsg={setArchiveErrorMsg}
             onOpenOverview={openEmailOverview}

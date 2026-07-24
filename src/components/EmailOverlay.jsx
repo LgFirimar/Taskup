@@ -12,7 +12,7 @@ export default function EmailOverlay({
   gmailClientId, setGmailClientId, showClientIdInput, setShowClientIdInput, editGmailClientId,
   gmailToken, connectGmail, disconnectGmail, gmailAuthError, setGmailAuthError,
   emailRules, saveEmailRules, newRule, setNewRule, showNewRule, setShowNewRule,
-  emailLoading, fetchAndSummarize, emailStatusMsg,
+  emailLoading, fetchAndSummarize, emailStatusMsg, emailSyncProgress,
   gmailLabels, labelsLoading, labelsError, fetchGmailLabels, ensureRuleLabel,
   archiveErrorMsg, setArchiveErrorMsg,
   onOpenOverview,
@@ -385,9 +385,15 @@ export default function EmailOverlay({
 
         {/* Fetch button */}
         {gmailToken&&(emailRules.length>0||emailInstructions.length>0)&&(
-          <button onClick={fetchAndSummarize} disabled={emailLoading} style={{width:"100%",background:accent,color:"white",border:"none",borderRadius:14,padding:"13px 0",fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginTop:20,marginBottom:20,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+          <button onClick={fetchAndSummarize} disabled={emailLoading} style={{width:"100%",background:accent,color:"white",border:"none",borderRadius:14,padding:"13px 0",fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginTop:20,marginBottom:emailLoading&&emailSyncProgress?4:20,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
             {emailLoading?<><div className="spinner" style={{borderTopColor:"white",borderColor:"rgba(255,255,255,0.3)"}}/>טוען מיילים...</>:"🔄 סכמי מיילים עכשיו"}
           </button>
+        )}
+
+        {/* Live progress — a "כל המיילים" sync can take a while since each
+            sender/keyword alternative is its own paginated Gmail search. */}
+        {emailLoading&&emailSyncProgress&&(
+          <div style={{fontSize:11,color:"#8a8a8a",textAlign:"center",marginBottom:20,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{emailSyncProgress}</div>
         )}
 
         {/* Status message from the last sync attempt */}

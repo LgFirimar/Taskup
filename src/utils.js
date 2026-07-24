@@ -99,6 +99,26 @@ const splitTerms = (value) => (value || "").split(",").map(s => s.trim()).filter
 // Quoting forces Gmail to treat it as a single exact phrase regardless.
 const atomicTerm = (term) => /^[\w@.-]+$/.test(term) ? term : `"${term}"`;
 
+// Once an instruction/rule has completed at least one full sync, there's no
+// need to keep re-listing the same old, already-seen mail on every
+// subsequent sync forever — that's what made repeat syncs on a big "כל
+// המיילים" backlog get slower over time (already-processed threads are
+// always skipped via existingKeys, so nothing was ever re-ACTED on — but
+// Gmail still had to re-LIST every matching thread, old and new, on every
+// single sync, which is the slow part). lastSyncedAt (set after each
+// completed sync — see syncEmail) becomes a rolling floor for the next
+// search, with a 1-day overlap for safety (clock skew, a message landing
+// right at the boundary). The very first sync (no lastSyncedAt yet) is
+// intentionally NOT floored this way, so it can still catch the whole
+// existing backlog once.
+const watermarkFloor = (lastSyncedAt) => {
+  if (!lastSyncedAt) return null;
+  const d = new Date(lastSyncedAt);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().slice(0, 10).replace(/-/g, "/");
+};
+
 // Builds Gmail search query strings from a rule/instruction's matching
 // fields (sender/keywords/date range) — shared between summarization rules
 // and "הוראות" instructions, since both match mail the same way. Note: no
@@ -119,9 +139,16 @@ const atomicTerm = (term) => /^[\w@.-]+$/.test(term) ? term : `"${term}"`;
 // to get wrong.
 export const buildGmailSearchQueries = (ruleLike) => {
   let dateQ = "";
-  if (ruleLike.dateAll) { /* no date filter */ }
-  else if (ruleLike.dateFrom) { dateQ = `after:${ruleLike.dateFrom.replace(/-/g,"/")} `; }
-  else { dateQ = "newer_than:30d "; }
+  const watermark = watermarkFloor(ruleLike.lastSyncedAt);
+  if (ruleLike.dateAll) {
+    if (watermark) dateQ = `after:${watermark} `;
+  } else if (ruleLike.dateFrom) {
+    const userFloor = ruleLike.dateFrom.replace(/-/g, "/");
+    const floor = (watermark && watermark > userFloor) ? watermark : userFloor;
+    dateQ = `after:${floor} `;
+  } else {
+    dateQ = "newer_than:30d ";
+  }
 
   const senderTerms = splitTerms(ruleLike.sender);
   const subjectTerms = splitTerms(ruleLike.subject);
