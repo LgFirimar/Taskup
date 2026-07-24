@@ -1948,6 +1948,7 @@ export default function App() {
           <EmailInstructionsLog
             accent={accent}
             emailInstructionLog={emailInstructionLog}
+            emailInstructions={emailInstructions}
             onBackToEmailHome={goEmailHome}
             onAppHome={goEmailAppHome}
           />

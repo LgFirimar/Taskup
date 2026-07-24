@@ -39,6 +39,26 @@ export default function EmailOverlay({
     return next;
   });
 
+  // Instructions are grouped by category (e.g. "עבודה"/"קניות"/"חשוב") —
+  // each instruction has at most one, chosen from previously-used categories
+  // or typed fresh via the "+ קטגוריה חדשה" option below. Uncategorized
+  // instructions land in one "ללא קטגוריה" bucket. Each group collapses
+  // independently, same reasoning as the list-level collapse above — once
+  // there are several categories a flat list is hard to scan.
+  const [expandedCategoryGroups, setExpandedCategoryGroups] = useState(() => new Set());
+  const toggleCategoryGroup = (key) => setExpandedCategoryGroups(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  // Whether the category <select> in the open form is currently in "typing a
+  // brand-new category name" mode — kept separate from newInstruction.category
+  // itself (which holds the actual value either way) so the text input can
+  // stay visible while she's mid-typing a name that doesn't match anything
+  // in existingCategories yet.
+  const [newCategoryMode, setNewCategoryMode] = useState(false);
+  const existingCategories = Array.from(new Set(emailInstructions.map(i=>i.category).filter(Boolean)));
+
   // Same collapse-behind-one-toggle treatment for the summarization rules
   // list, for the same reason.
   const [showRulesList, setShowRulesList] = useState(false);
@@ -83,11 +103,14 @@ export default function EmailOverlay({
     if (toSave.action==="folder"&&!toSave.labelId&&toSave.labelName) ensureInstructionLabel(toSave);
     setNewInstruction({sender:"",subject:"",action:"folder"});
     setShowNewInstruction(false);
+    setNewCategoryMode(false);
     // Open the (possibly still-collapsed) list right away so saving actually
-    // shows the result, and expand just the saved/edited row so she can
-    // confirm at a glance what was saved without an extra click.
+    // shows the result, and expand just the saved/edited row (and its
+    // category group, now that the list is grouped) so she can confirm at a
+    // glance what was saved without an extra click.
     setShowInstructionsList(true);
     setExpandedInstructionIds(prev => new Set(prev).add(toSave.id));
+    setExpandedCategoryGroups(prev => new Set(prev).add(toSave.category || "__none__"));
   };
 
   return (
@@ -300,7 +323,7 @@ export default function EmailOverlay({
         {/* Instructions — lightweight sort/delete-only rules, no AI summarization */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,marginTop:24}}>
           <span style={{fontWeight:700,fontSize:14}}>הוראות מיון/מחיקה</span>
-          <button onClick={()=>{setNewInstruction({sender:"",subject:"",action:"folder"});setShowNewInstruction(true);}} style={{background:"#555",color:"white",border:"none",borderRadius:10,padding:"5px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>+ הוראה חדשה</button>
+          <button onClick={()=>{setNewInstruction({sender:"",subject:"",action:"folder"});setNewCategoryMode(false);setShowNewInstruction(true);}} style={{background:"#555",color:"white",border:"none",borderRadius:10,padding:"5px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>+ הוראה חדשה</button>
         </div>
         <div style={{fontSize:11,color:"#8a8a8a",marginTop:-8,marginBottom:12}}>מיילים תואמים יעברו לתיקייה או יימחקו — בלי סיכום. אפשר לראות מה טופל בדף "📋 הוראות".</div>
 
@@ -319,9 +342,29 @@ export default function EmailOverlay({
           <div style={{background:"white",borderRadius:14,padding:16,marginBottom:12,boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
               <span style={{fontSize:13,fontWeight:700}}>{newInstruction.id?"עריכת הוראה":"הוראה חדשה"}</span>
-              <button onClick={()=>{setShowNewInstruction(false);setNewInstruction({sender:"",subject:"",action:"folder"});}} style={{background:"none",border:"none",cursor:"pointer",color:"#8a8a8a",fontSize:18,lineHeight:1}} aria-label="בטל">✕</button>
+              <button onClick={()=>{setShowNewInstruction(false);setNewInstruction({sender:"",subject:"",action:"folder"});setNewCategoryMode(false);}} style={{background:"none",border:"none",cursor:"pointer",color:"#8a8a8a",fontSize:18,lineHeight:1}} aria-label="בטל">✕</button>
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {/* Category — organizes both this list and the "הוראות שטופלו" log */}
+              <div style={{display:"flex",alignItems:"center",gap:8,background:"#f9f9f8",borderRadius:10,padding:"8px 12px"}}>
+                <label style={{fontSize:12,color:"#888",whiteSpace:"nowrap"}}>קטגוריה:</label>
+                <select
+                  className="plain-input" style={{flex:1,fontSize:12}}
+                  value={newCategoryMode ? "__new__" : (newInstruction.category || "")}
+                  onChange={e=>{
+                    const v = e.target.value;
+                    if (v === "__new__") { setNewCategoryMode(true); setNewInstruction(p=>({...p,category:""})); }
+                    else { setNewCategoryMode(false); setNewInstruction(p=>({...p,category:v})); }
+                  }}
+                >
+                  <option value="">ללא קטגוריה</option>
+                  {existingCategories.map(c=><option key={c} value={c}>{c}</option>)}
+                  <option value="__new__">+ קטגוריה חדשה</option>
+                </select>
+              </div>
+              {newCategoryMode&&(
+                <input autoFocus className="plain-input" style={{fontSize:12}} placeholder="שם הקטגוריה (לדוג' עבודה, קניות, חשוב)" value={newInstruction.category||""} onChange={e=>setNewInstruction(p=>({...p,category:e.target.value}))}/>
+              )}
               <input className="plain-input" style={{fontSize:13}} placeholder="שולח (לדוג' newsletter.com, אופציונלי)" value={newInstruction.sender} onChange={e=>setNewInstruction(p=>({...p,sender:e.target.value}))}/>
               <input className="plain-input" style={{fontSize:13}} placeholder="מילות מפתח, אפשר כמה מופרדות בפסיק = כל אחת בנפרד (בלי שולח — יחפש רק לפי המילים)" value={newInstruction.subject} onChange={e=>setNewInstruction(p=>({...p,subject:e.target.value}))}/>
               {newInstruction.subject&&(
@@ -391,40 +434,69 @@ export default function EmailOverlay({
           </div>
         )}
 
-        {showInstructionsList&&emailInstructions.map(instruction=>{
-          const isExpanded = expandedInstructionIds.has(instruction.id);
-          const summary = [instruction.sender&&`מ: ${instruction.sender}`, instruction.subject&&`מילים: ${instruction.subject}`].filter(Boolean).join(" | ") || "(הוראה ללא תנאים)";
-          return (
-            <div key={instruction.id} style={{background:"white",borderRadius:12,marginBottom:8,boxShadow:"0 1px 6px rgba(0,0,0,0.05)",borderRight:"3px solid #888",overflow:"hidden"}}>
-              <button
-                onClick={()=>toggleInstructionExpanded(instruction.id)}
-                aria-expanded={isExpanded}
-                aria-label={isExpanded?"כווץ הוראה":"הרחב הוראה"}
-                style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background:"none",border:"none",cursor:"pointer",textAlign:"right",fontFamily:"'Heebo',sans-serif"}}
-              >
-                <span style={{flex:1,fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{summary}</span>
-                <span style={{fontSize:11,color:"#888",flexShrink:0}}>{EMAIL_INSTRUCTION_ACTION_LABELS[instruction.action]}</span>
-                <span style={{fontSize:12,color:"#8a8a8a",flexShrink:0,display:"inline-block",transition:"transform 0.15s",transform:isExpanded?"rotate(180deg)":"none"}}>▾</span>
-              </button>
-              {isExpanded&&(
-                <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 14px 12px"}}>
-                  <div style={{flex:1}}>
-                    {instruction.sender&&<div style={{fontSize:13,fontWeight:600}}>מ: {instruction.sender}</div>}
-                    {instruction.subject&&<div style={{fontSize:12,color:"#888"}}>מילות מפתח: {instruction.subject} ({instruction.searchScope==="all"?"כותרת+תוכן":"כותרת בלבד"})</div>}
-                    <div style={{fontSize:11,color:"#555",marginTop:2}}>
-                      {EMAIL_INSTRUCTION_ACTION_LABELS[instruction.action]}
-                      {instruction.action==="folder"&&(gmailLabels.find(l=>l.id===instruction.labelId)?.name||instruction.labelName)&&` → "${gmailLabels.find(l=>l.id===instruction.labelId)?.name||instruction.labelName}"`}
-                      {" • "}
-                      {instruction.dateAll?"כל המיילים":instruction.dateFrom?`מ-${formatDate(instruction.dateFrom)}`:"30 ימים אחרונים"}
+        {showInstructionsList&&(()=>{
+          // Group while preserving each category's first-appearance order.
+          const groups = [];
+          const groupIndexByKey = new Map();
+          emailInstructions.forEach(instruction=>{
+            const key = instruction.category || "__none__";
+            if (!groupIndexByKey.has(key)) {
+              groupIndexByKey.set(key, groups.length);
+              groups.push({ key, label: instruction.category || "ללא קטגוריה", entries: [] });
+            }
+            groups[groupIndexByKey.get(key)].entries.push(instruction);
+          });
+          return groups.map(g=>{
+            const isGroupOpen = expandedCategoryGroups.has(g.key);
+            return (
+              <div key={g.key} style={{marginBottom:8}}>
+                <button
+                  onClick={()=>toggleCategoryGroup(g.key)}
+                  aria-expanded={isGroupOpen}
+                  style={{width:"100%",background:"none",border:"1.5px solid #dde",borderRadius:12,color:g.key==="__none__"?"#8a8a8a":"#555",padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:isGroupOpen?6:0,display:"flex",alignItems:"center",gap:10}}
+                >
+                  <span style={{flex:1,textAlign:"right"}}>🏷️ {g.label}</span>
+                  <span style={{fontSize:11,color:"#8a8a8a"}}>{g.entries.length}</span>
+                  <span style={{fontSize:12,color:"#8a8a8a",display:"inline-block",transition:"transform 0.15s",transform:isGroupOpen?"rotate(180deg)":"none"}}>▾</span>
+                </button>
+                {isGroupOpen&&g.entries.map(instruction=>{
+                  const isExpanded = expandedInstructionIds.has(instruction.id);
+                  const summary = [instruction.sender&&`מ: ${instruction.sender}`, instruction.subject&&`מילים: ${instruction.subject}`].filter(Boolean).join(" | ") || "(הוראה ללא תנאים)";
+                  return (
+                    <div key={instruction.id} style={{background:"white",borderRadius:12,marginBottom:8,boxShadow:"0 1px 6px rgba(0,0,0,0.05)",borderRight:"3px solid #888",overflow:"hidden"}}>
+                      <button
+                        onClick={()=>toggleInstructionExpanded(instruction.id)}
+                        aria-expanded={isExpanded}
+                        aria-label={isExpanded?"כווץ הוראה":"הרחב הוראה"}
+                        style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background:"none",border:"none",cursor:"pointer",textAlign:"right",fontFamily:"'Heebo',sans-serif"}}
+                      >
+                        <span style={{flex:1,fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{summary}</span>
+                        <span style={{fontSize:11,color:"#888",flexShrink:0}}>{EMAIL_INSTRUCTION_ACTION_LABELS[instruction.action]}</span>
+                        <span style={{fontSize:12,color:"#8a8a8a",flexShrink:0,display:"inline-block",transition:"transform 0.15s",transform:isExpanded?"rotate(180deg)":"none"}}>▾</span>
+                      </button>
+                      {isExpanded&&(
+                        <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 14px 12px"}}>
+                          <div style={{flex:1}}>
+                            {instruction.sender&&<div style={{fontSize:13,fontWeight:600}}>מ: {instruction.sender}</div>}
+                            {instruction.subject&&<div style={{fontSize:12,color:"#888"}}>מילות מפתח: {instruction.subject} ({instruction.searchScope==="all"?"כותרת+תוכן":"כותרת בלבד"})</div>}
+                            <div style={{fontSize:11,color:"#555",marginTop:2}}>
+                              {EMAIL_INSTRUCTION_ACTION_LABELS[instruction.action]}
+                              {instruction.action==="folder"&&(gmailLabels.find(l=>l.id===instruction.labelId)?.name||instruction.labelName)&&` → "${gmailLabels.find(l=>l.id===instruction.labelId)?.name||instruction.labelName}"`}
+                              {" • "}
+                              {instruction.dateAll?"כל המיילים":instruction.dateFrom?`מ-${formatDate(instruction.dateFrom)}`:"30 ימים אחרונים"}
+                            </div>
+                          </div>
+                          <button onClick={()=>{setNewInstruction({sender:"",subject:"",dateFrom:"",dateAll:false,...instruction});setNewCategoryMode(false);setShowNewInstruction(true);}} style={{background:"none",border:"none",color:"#8a8a8a",cursor:"pointer",fontSize:15}} aria-label="ערוך הוראה">✎</button>
+                          <button onClick={()=>saveEmailInstructions(emailInstructions.filter(r=>r.id!==instruction.id))} style={{background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:16}} aria-label="מחק הוראה">✕</button>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  <button onClick={()=>{setNewInstruction({sender:"",subject:"",dateFrom:"",dateAll:false,...instruction});setShowNewInstruction(true);}} style={{background:"none",border:"none",color:"#8a8a8a",cursor:"pointer",fontSize:15}} aria-label="ערוך הוראה">✎</button>
-                  <button onClick={()=>saveEmailInstructions(emailInstructions.filter(r=>r.id!==instruction.id))} style={{background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:16}} aria-label="מחק הוראה">✕</button>
-                </div>
-              )}
-            </div>
-          );
-        })}
+                  );
+                })}
+              </div>
+            );
+          });
+        })()}
 
         {/* Fetch button */}
         {gmailToken&&(emailRules.length>0||emailInstructions.length>0)&&(

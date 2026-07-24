@@ -6,11 +6,16 @@ import { gmailWebUrl } from "../utils";
 // no AI summarization). Entries are prepended as they're created, so the
 // array is already most-recent-first.
 //
-// Grouped by "sort group" — the folder mail was moved to, or a single
-// "נמחקו" group for deletions — collapsed by default, one click per group
-// reveals its emails. A flat list got long fast once several instructions
-// had been running for a while.
-export default function EmailInstructionsLog({ accent, emailInstructionLog, onBackToEmailHome, onAppHome }) {
+// Grouped by the instruction's category (see the category picker in
+// EmailOverlay's "+ הוראה חדשה" form) — instructions with no category, or
+// whose instruction was later deleted so its category can't be resolved
+// anymore, fall into one "ללא קטגוריה" bucket. Collapsed by default, one
+// click per group reveals its emails — a flat list got long fast once
+// several instructions had been running for a while. Each entry still shows
+// what actually happened to it (moved to a folder / deleted) inline, since
+// that's no longer implied by the group itself the way it was when grouping
+// was by sort-target.
+export default function EmailInstructionsLog({ accent, emailInstructionLog, emailInstructions, onBackToEmailHome, onAppHome }) {
   const containerRef = useRef(null);
   useFocusTrap(containerRef, true, onBackToEmailHome);
   const [expandedGroups, setExpandedGroups] = useState(() => new Set());
@@ -20,17 +25,19 @@ export default function EmailInstructionsLog({ accent, emailInstructionLog, onBa
     return next;
   });
 
+  const categoryByInstructionId = new Map((emailInstructions || []).map(i => [i.id, i.category || ""]));
+
   // Group while preserving each group's first-appearance order — since the
   // log is already most-recent-first, that means the most recently active
   // group comes first.
   const groups = [];
   const groupIndexByKey = new Map();
   emailInstructionLog.forEach(m => {
-    const isDelete = m.action === "delete";
-    const key = isDelete ? "__deleted__" : (m.labelName || "מוין");
+    const category = categoryByInstructionId.get(m.instructionId) || "";
+    const key = category || "__none__";
     if (!groupIndexByKey.has(key)) {
       groupIndexByKey.set(key, groups.length);
-      groups.push({ key, label: isDelete ? "🗑️ נמחקו" : `📁 ${key}`, entries: [] });
+      groups.push({ key, label: category || "ללא קטגוריה", entries: [] });
     }
     groups[groupIndexByKey.get(key)].entries.push(m);
   });
@@ -56,23 +63,27 @@ export default function EmailInstructionsLog({ accent, emailInstructionLog, onBa
                 aria-expanded={isOpen}
                 style={{width:"100%",background:"white",border:"none",borderRadius:12,boxShadow:"0 1px 6px rgba(0,0,0,0.05)",padding:"12px 14px",display:"flex",alignItems:"center",gap:10,cursor:"pointer",fontFamily:"'Heebo',sans-serif",textAlign:"right"}}
               >
-                <span style={{flex:1,fontSize:13,fontWeight:700,color:g.key==="__deleted__"?"#b91c1c":accent}}>{g.label}</span>
+                <span style={{flex:1,fontSize:13,fontWeight:700,color:g.key==="__none__"?"#8a8a8a":accent}}>🏷️ {g.label}</span>
                 <span style={{fontSize:11,fontWeight:700,color:"#8a8a8a"}}>{g.entries.length}</span>
                 <span style={{fontSize:12,color:"#8a8a8a",display:"inline-block",transition:"transform 0.15s",transform:isOpen?"rotate(180deg)":"none"}}>▾</span>
               </button>
               {isOpen&&(
                 <div style={{padding:"8px 4px 0"}}>
-                  {g.entries.map(m=>(
-                    <div key={`${m.instructionId}:${m.id}`} style={{background:"white",borderRadius:12,padding:"12px 14px",marginBottom:8,boxShadow:"0 1px 6px rgba(0,0,0,0.05)"}}>
-                      <div style={{fontSize:11,color:"#6b6b6b",marginBottom:3}}>{m.sender} • {m.date?new Date(m.date).toLocaleDateString("he-IL",{day:"numeric",month:"short"}):""}</div>
-                      <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
-                        <div style={{fontSize:13,fontWeight:600,color:"#1a1a2e",flex:1}}>{m.subject}</div>
-                        {m.id&&(
-                          <a href={gmailWebUrl(m.id,m.messageId)} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:"#0077b6",fontWeight:700,whiteSpace:"nowrap",textDecoration:"none",flexShrink:0}}>📩 מייל מקורי</a>
-                        )}
+                  {g.entries.map(m=>{
+                    const isDelete = m.action === "delete";
+                    const actionLabel = isDelete ? "🗑️ נמחקה" : `📁 ${m.labelName || "מוין"}`;
+                    return (
+                      <div key={`${m.instructionId}:${m.id}`} style={{background:"white",borderRadius:12,padding:"12px 14px",marginBottom:8,boxShadow:"0 1px 6px rgba(0,0,0,0.05)"}}>
+                        <div style={{fontSize:11,color:"#6b6b6b",marginBottom:3}}>{m.sender} • {m.date?new Date(m.date).toLocaleDateString("he-IL",{day:"numeric",month:"short"}):""} • <span style={{color:isDelete?"#b91c1c":"#0077b6"}}>{actionLabel}</span></div>
+                        <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
+                          <div style={{fontSize:13,fontWeight:600,color:"#1a1a2e",flex:1}}>{m.subject}</div>
+                          {m.id&&(
+                            <a href={gmailWebUrl(m.id,m.messageId)} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:"#0077b6",fontWeight:700,whiteSpace:"nowrap",textDecoration:"none",flexShrink:0}}>📩 מייל מקורי</a>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
