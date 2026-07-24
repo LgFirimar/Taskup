@@ -172,6 +172,39 @@ export default function App() {
   const [showNewInstruction,setShowNewInstruction] = useState(false);
   const [newInstruction,setNewInstruction] = useState({sender:"",subject:"",action:"folder"});
 
+  // One-time self-heal, runs once ever per browser: earlier today's watermark
+  // feature could advance a rule/instruction's lastSyncedAt even when a sync
+  // was cancelled, hit a token expiry mid-loop, or (for rules) simply had
+  // more fresh matches than the per-sync cap of 3 — in all of those cases
+  // the leftover backlog mail silently became unreachable by any future
+  // search, since a search only looks for mail newer than the watermark.
+  // That bug is now fixed going forward, but anyone who already hit it today
+  // needs their existing (possibly wrongly-advanced) watermarks cleared once
+  // so the next sync does one full unrestricted pass and actually catches
+  // whatever got silently skipped, instead of staying missed forever.
+  useEffect(() => {
+    if (localStorage.getItem("email_watermark_migration_v1")) return;
+    // Deferred via setTimeout (same pattern as the labels-fetch effect below)
+    // so the setState calls happen outside the effect's synchronous body.
+    const t = setTimeout(() => {
+      localStorage.setItem("email_watermark_migration_v1", "1");
+      const stripWatermark = (list) => list.map(r => { const copy = { ...r }; delete copy.lastSyncedAt; return copy; });
+      setEmailRules(prev => {
+        if (!prev.some(r => r.lastSyncedAt)) return prev;
+        const next = stripWatermark(prev);
+        localStorage.setItem("email_rules", JSON.stringify(next));
+        return next;
+      });
+      setEmailInstructions(prev => {
+        if (!prev.some(r => r.lastSyncedAt)) return prev;
+        const next = stripWatermark(prev);
+        localStorage.setItem("email_instructions", JSON.stringify(next));
+        return next;
+      });
+    }, 0);
+    return () => clearTimeout(t);
+  }, []);
+
   // ── Email sub-pages (מיילים מסוכמים) ──────────────────────────────────────
   // These are separate full-screen "pages" reached from the email home overlay.
   // Navigation is flat (not a stack): every sub-page has exactly two nav
@@ -877,15 +910,23 @@ export default function App() {
   // generous but finite number of pages — purely an infinite-loop guard,
   // not a real limit any personal mailbox should ever approach.
   const MAX_PAGES_PER_QUERY = 50;
-  const fetchAllMatchingThreads = async (queries) => {
+  // onProgress (optional) is called throughout the search so the caller can
+  // show real movement on a big backlog — a "כל המיילים" search can span
+  // dozens of paginated requests before it's even done listing what to
+  // process, during which the old code left the progress text completely
+  // frozen (looked identical to actually being stuck).
+  const fetchAllMatchingThreads = async (queries, onProgress) => {
     const threadMap = new Map();
     const queryDebugParts = [];
+    let qIdx = 0;
     for (const q of queries) {
+      qIdx++;
       if (emailSyncCancelRef.current) break;
       let pageToken;
       let pages = 0;
       let foundForQuery = 0;
       do {
+        onProgress?.(`מחפשת מיילים תואמים (${qIdx}/${queries.length})${threadMap.size?`, נמצאו ${threadMap.size} עד כה`:""}`);
         const url = `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=100${pageToken?`&pageToken=${encodeURIComponent(pageToken)}`:""}`;
         const res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${gmailToken}` } });
         if (res.status === 401) return { threadMap, queryDebugParts, authExpired: true };
@@ -916,7 +957,7 @@ export default function App() {
   // everything and losing done/pending marks. Returns data only — doesn't
   // touch component state, so both the global sync and a single-rule
   // re-sync can share it.
-  const runRuleSync = async (rule, existingKeys) => {
+  const runRuleSync = async (rule, existingKeys, onProgress) => {
     const ruleLabel = [rule.sender&&`מ: ${rule.sender}`, rule.subject&&`מילים: ${rule.subject}`].filter(Boolean).join(" | ") || "(חוק ללא תנאים)";
     const newEntries = [];
     let threadsFoundCount = 0;
@@ -924,25 +965,28 @@ export default function App() {
     let authExpired = false;
     let debugLine = "";
     let searchCompleted = false;
+    // Whether every fresh match the search found actually got attempted
+    // this run — see the big comment below on why watermark advancement
+    // must NOT happen unless this is true, or unprocessed backlog silently
+    // becomes unreachable forever.
+    let fullyDrained;
     const failureDetails = [];
     try {
       // Several independent queries (one per sender/keyword alternative,
       // see buildGmailSearchQueries) instead of one combined OR-group
       // query, each fully paginated — merge their results (deduped by
       // thread id) below.
-      const { threadMap, queryDebugParts, authExpired: searchAuthExpired } = await fetchAllMatchingThreads(buildGmailSearchQueries(rule));
+      const { threadMap, queryDebugParts, authExpired: searchAuthExpired } = await fetchAllMatchingThreads(buildGmailSearchQueries(rule), onProgress);
       if (searchAuthExpired) {
         disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי לסכם שוב.");
         authExpired = true;
-        return { newEntries, threadsFoundCount, failures, debugLine, authExpired };
+        return { newEntries, threadsFoundCount, failures, debugLine, authExpired, fullyDrained: false };
       }
       const threads = Array.from(threadMap.values());
       threadsFoundCount = threads.length;
       debugLine = `${ruleLabel} → ${queryDebugParts.join(" | ")} → סה"כ ${threads.length} תוצאות`;
       // The SEARCH itself (the part that gets slower the more history piles
-      // up) is done at this point regardless of what happens below — lets
-      // the caller advance this rule's watermark even if an individual
-      // thread's summarization later fails.
+      // up) is done at this point regardless of what happens below.
       searchCompleted = true;
 
       // Skip threads we've already synced before (in any status) — this is
@@ -961,8 +1005,13 @@ export default function App() {
       // sync (a big backlog gets worked through gradually, a few emails at
       // a time per "🔄 סכמי מיילים עכשיו" click) even though the SEARCH
       // above is no longer capped and now finds the whole backlog.
-      for (const thread of freshThreads.slice(0, 3)) {
-        if (emailSyncCancelRef.current) break;
+      const capped = freshThreads.slice(0, 3);
+      let doneCount = 0;
+      let stoppedEarly = false;
+      for (const thread of capped) {
+        if (emailSyncCancelRef.current) { stoppedEarly = true; break; }
+        onProgress?.(`מסכמת מייל ${doneCount+1} מתוך ${capped.length}`);
+        doneCount++;
         const tRes = await fetchWithTimeout(
           `https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=full`,
           { headers: { Authorization: `Bearer ${gmailToken}` } }
@@ -1062,24 +1111,40 @@ export default function App() {
           newEntries.push({ id: thread.id, subject, sender, date, results, ruleId: rule.id, archived, status: null });
         }
       }
+      // Only "everything the search found was attempted this run" makes it
+      // safe to advance the watermark — the intentional cap-to-3 above, or a
+      // cancel mid-loop, both leave older matching mail behind that a
+      // watermark-restricted future search would never see again (it only
+      // looks for mail NEWER than the watermark). Leaving fullyDrained false
+      // means the next sync re-lists the same backlog (a bit slower) and
+      // keeps working through it 3 at a time — slower, but nothing gets
+      // silently skipped forever.
+      fullyDrained = freshThreads.length <= capped.length && !stoppedEarly;
     } catch(e) {
       console.error(e);
       failures++;
+      fullyDrained = false;
       debugLine = `${ruleLabel} → שגיאה: ${e.message}`;
     }
-    return { newEntries, threadsFoundCount, failures, debugLine, authExpired, failureDetails, searchCompleted };
+    return { newEntries, threadsFoundCount, failures, debugLine, authExpired, failureDetails, searchCompleted, fullyDrained };
   };
 
   // Does the actual search+trash/sort work for ONE "הוראה" — mirrors
   // runRuleSync but with no AI summarization at all: matching NEW threads
   // (per existingKeys, same skip-if-already-processed pattern) just get the
   // configured action applied and logged.
-  const runInstructionSync = async (instruction, existingKeys) => {
+  const runInstructionSync = async (instruction, existingKeys, onProgress) => {
     const newLogEntries = [];
     let failures = 0;
     let authExpired = false;
     let debugLine = "";
     let searchCompleted = false;
+    // See the matching comment in runRuleSync — watermark advancement must
+    // only happen once every fresh match this run's search found was
+    // actually attempted, or a cancel/token-expiry mid-loop silently leaves
+    // older backlog mail unreachable by any future (watermark-restricted)
+    // search.
+    let fullyDrained;
     const label = [instruction.sender&&`מ: ${instruction.sender}`, instruction.subject&&`מילים: ${instruction.subject}`].filter(Boolean).join(" | ") || "(הוראה ללא תנאים)";
     try {
       // Several independent queries (one per sender/keyword alternative,
@@ -1088,18 +1153,16 @@ export default function App() {
       // thread id) below. No AI cost here (plain sort/delete), so unlike a
       // rule's summarization step, every fresh match below gets processed
       // in the same sync — not just a handful.
-      const { threadMap, queryDebugParts, authExpired: searchAuthExpired } = await fetchAllMatchingThreads(buildGmailSearchQueries(instruction));
+      const { threadMap, queryDebugParts, authExpired: searchAuthExpired } = await fetchAllMatchingThreads(buildGmailSearchQueries(instruction), onProgress);
       if (searchAuthExpired) {
         disconnectGmail("החיבור לחשבון Gmail פג תוקף (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי שוב.");
-        return { newLogEntries, failures, debugLine, authExpired: true, searchCompleted };
+        return { newLogEntries, failures, debugLine, authExpired: true, searchCompleted, fullyDrained: false };
       }
       const threads = Array.from(threadMap.values());
       const freshThreads = threads.filter(t => !existingKeys.has(`${instruction.id}:${t.id}`));
       debugLine = `${label} → ${queryDebugParts.join(" | ")} → סה"כ ${threads.length} תוצאות, ${freshThreads.length} חדשות`;
       // The SEARCH itself (the part that gets slower the more history piles
-      // up) is done at this point regardless of what happens below — lets
-      // the caller advance this instruction's watermark even if an
-      // individual thread's trash/move action later fails.
+      // up) is done at this point regardless of what happens below.
       searchCompleted = true;
 
       let labelId = null;
@@ -1107,11 +1170,32 @@ export default function App() {
         labelId = instruction.labelId || (instruction.labelName ? await ensureInstructionLabel(instruction) : null);
       }
 
-      for (const thread of freshThreads) {
-        if (emailSyncCancelRef.current) break;
+      let stoppedEarly = false;
+      for (let j = 0; j < freshThreads.length; j++) {
+        const thread = freshThreads[j];
+        if (emailSyncCancelRef.current) { stoppedEarly = true; break; }
+        // Per-email progress — this loop has no AI cost cap (see comment
+        // above), so on a big backlog it can be the ONLY thing running for a
+        // long stretch. Without this, the progress text stayed frozen on
+        // "בודקת הוראה X" for the entire loop, indistinguishable from being
+        // stuck even when hundreds of emails were being processed correctly.
+        onProgress?.(`ממיינת מייל ${j+1} מתוך ${freshThreads.length}`);
         // Need Subject/From/Date for the log entry — a lightweight metadata
         // fetch, not the full message body (no summarization happening here).
         const mRes = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, { headers: { Authorization: `Bearer ${gmailToken}` } });
+        // A token that expires PARTWAY through a long backlog (very
+        // plausible — the ~1hr Gmail token can die mid-loop on a big sort)
+        // used to just fail every remaining thread one by one with a
+        // generic "failures++" and keep grinding through the rest of the
+        // list for nothing — potentially hundreds more doomed requests
+        // before the loop naturally ran out. Stop immediately instead, the
+        // same way the search phase already does.
+        if (mRes.status === 401) {
+          disconnectGmail("החיבור לחשבון Gmail פג תוקף באמצע הסנכרון (זה קורה אחרי כשעה) — לחצי על \"התחבר ל-Gmail\" למעלה כדי להתחבר מחדש, ואז נסי שוב. מה שכבר מוין/נמחק עד כה נשמר.");
+          authExpired = true;
+          stoppedEarly = true;
+          break;
+        }
         if (!mRes.ok) { failures++; continue; }
         const mData = await mRes.json();
         const headers = mData.messages?.[0]?.payload?.headers || [];
@@ -1122,15 +1206,30 @@ export default function App() {
         const ok = instruction.action === "delete"
           ? await trashThread(thread.id)
           : (labelId ? await archiveThreadToLabel(thread.id, labelId) : false);
-        if (!ok) { failures++; continue; }
+        if (!ok) {
+          // trashThread/archiveThreadToLabel already call disconnectGmail
+          // (which clears localStorage synchronously) on their own 401 — a
+          // cleared token here means that's exactly what just happened, so
+          // stop for the same reason as above instead of continuing to fail
+          // through the rest of the backlog.
+          if (!localStorage.getItem("gmail_token")) { authExpired = true; stoppedEarly = true; break; }
+          failures++; continue;
+        }
         newLogEntries.push({ id: thread.id, instructionId: instruction.id, subject, sender, date, action: instruction.action, labelName: instruction.labelName || gmailLabels.find(l=>l.id===instruction.labelId)?.name || null });
       }
+      // See the matching comment in runRuleSync — only safe to advance the
+      // watermark if we made it through every fresh match without an early
+      // stop (cancel or a token dying mid-loop), or older backlog mail past
+      // the stop point would silently become unreachable by any future
+      // (watermark-restricted) search.
+      fullyDrained = !stoppedEarly;
     } catch (e) {
       console.error(e);
       failures++;
+      fullyDrained = false;
       debugLine = `${label} → שגיאה: ${e.message}`;
     }
-    return { newLogEntries, failures, debugLine, authExpired, searchCompleted };
+    return { newLogEntries, failures, debugLine, authExpired, searchCompleted, fullyDrained };
   };
 
   // Stops an in-progress sync at the next safe checkpoint (between Gmail
@@ -1165,8 +1264,9 @@ export default function App() {
       if (emailSyncCancelRef.current) break;
       const rule = emailRules[i];
       const ruleLabel = [rule.sender&&`מ: ${rule.sender}`, rule.subject&&`מילים: ${rule.subject}`].filter(Boolean).join(" | ") || "(חוק ללא תנאים)";
-      setEmailSyncProgress(`בודקת חוק ${i+1} מתוך ${emailRules.length}: ${ruleLabel}`);
-      const result = await runRuleSync(rule, existingKeys);
+      const baseMsg = `בודקת חוק ${i+1} מתוך ${emailRules.length}: ${ruleLabel}`;
+      setEmailSyncProgress(baseMsg);
+      const result = await runRuleSync(rule, existingKeys, (detail) => setEmailSyncProgress(`${baseMsg} — ${detail}`));
       if (result.authExpired) { authExpired = true; break; }
       threadsFound += result.threadsFoundCount;
       summarizeFailures += result.failures;
@@ -1174,11 +1274,15 @@ export default function App() {
       if (result.failureDetails?.length) summarizeFailureDetails.push(...result.failureDetails);
       result.newEntries.forEach(e => existingKeys.add(`${e.ruleId}:${e.id}`));
       allNew.push(...result.newEntries);
-      // Advance this rule's watermark once its SEARCH has fully completed
-      // (see buildGmailSearchQueries) — regardless of whether an individual
-      // email's summarization failed — so the next sync only has to look at
-      // mail newer than this one, not re-list the whole backlog again.
-      if (result.searchCompleted) updatedRules = updatedRules.map(r => r.id===rule.id ? {...r, lastSyncedAt: nowIso} : r);
+      // Advance this rule's watermark ONLY once everything the search found
+      // was actually attempted this run (fullyDrained) — not just once the
+      // search itself finished. The search can find far more than the
+      // intentional per-sync cap of 3 processes, or a cancel can cut the
+      // capped loop short — either way, advancing the watermark anyway
+      // would make that leftover backlog mail permanently invisible to any
+      // future search (which only looks for mail newer than the
+      // watermark). See runRuleSync's own comment for the full reasoning.
+      if (result.fullyDrained) updatedRules = updatedRules.map(r => r.id===rule.id ? {...r, lastSyncedAt: nowIso} : r);
     }
     if (allNew.length) setEmailSummaries(prev => [...prev, ...allNew]);
     if (updatedRules !== emailRules) saveEmailRules(updatedRules);
@@ -1192,12 +1296,18 @@ export default function App() {
         if (emailSyncCancelRef.current) break;
         const instruction = emailInstructions[i];
         const instrLabel = [instruction.sender&&`מ: ${instruction.sender}`, instruction.subject&&`מילים: ${instruction.subject}`].filter(Boolean).join(" | ") || "(הוראה ללא תנאים)";
-        setEmailSyncProgress(`בודקת הוראה ${i+1} מתוך ${emailInstructions.length}: ${instrLabel}`);
-        const result = await runInstructionSync(instruction, existingInstructionKeys);
+        const baseMsg = `בודקת הוראה ${i+1} מתוך ${emailInstructions.length}: ${instrLabel}`;
+        setEmailSyncProgress(baseMsg);
+        const result = await runInstructionSync(instruction, existingInstructionKeys, (detail) => setEmailSyncProgress(`${baseMsg} — ${detail}`));
         if (result.authExpired) { authExpired = true; break; }
         result.newLogEntries.forEach(e => existingInstructionKeys.add(`${e.instructionId}:${e.id}`));
         allNewLog.push(...result.newLogEntries);
-        if (result.searchCompleted) updatedInstructions = updatedInstructions.map(r => r.id===instruction.id ? {...r, lastSyncedAt: nowIso} : r);
+        // Only advance the watermark once every fresh match was actually
+        // attempted this run — see runInstructionSync's fullyDrained
+        // comment. A cancel or mid-sync token expiry must NOT advance it,
+        // or the untouched remainder of the backlog becomes permanently
+        // invisible to future (watermark-restricted) searches.
+        if (result.fullyDrained) updatedInstructions = updatedInstructions.map(r => r.id===instruction.id ? {...r, lastSyncedAt: nowIso} : r);
       }
       if (allNewLog.length) { setEmailInstructionLog(prev => [...allNewLog, ...prev]); instructionsProcessed = allNewLog.length; }
       if (updatedInstructions !== emailInstructions) saveEmailInstructions(updatedInstructions);
@@ -1244,7 +1354,8 @@ export default function App() {
     if (!result.authExpired && result.newEntries.length) {
       setEmailSummaries(prev => [...prev, ...result.newEntries]);
     }
-    if (result.searchCompleted) {
+    // Same fullyDrained gate as the main sync — see runRuleSync's comment.
+    if (result.fullyDrained) {
       saveEmailRules(emailRules.map(r => r.id===rule.id ? {...r, lastSyncedAt: new Date().toISOString()} : r));
     }
     setRuleSyncingId(null);
