@@ -64,7 +64,7 @@ export default function EmailRuleDetail({
               <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:10}}>
                 <div style={{fontWeight:700,fontSize:14,color:"#1a1a2e",flex:1}}>{s.subject}</div>
                 {s.id&&(
-                  <a href={gmailWebUrl(s.id)} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:"#0077b6",fontWeight:700,whiteSpace:"nowrap",textDecoration:"none",flexShrink:0}}>📩 מייל מקורי</a>
+                  <a href={gmailWebUrl(s.id,s.messageId)} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:"#0077b6",fontWeight:700,whiteSpace:"nowrap",textDecoration:"none",flexShrink:0}}>📩 מייל מקורי</a>
                 )}
               </div>
               {entries.map(([fmt,text],idx)=>{

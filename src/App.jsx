@@ -907,7 +907,7 @@ export default function App() {
       const messages = [];
       for (const id of ids) {
         try {
-          const mRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, { headers: { Authorization: `Bearer ${gmailToken}` } });
+          const mRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date&metadataHeaders=Message-ID`, { headers: { Authorization: `Bearer ${gmailToken}` } });
           if (!mRes.ok) continue;
           const mData = await mRes.json();
           const headers = mData.payload?.headers || [];
@@ -916,6 +916,7 @@ export default function App() {
             subject: headers.find(h=>h.name==="Subject")?.value || "(ללא נושא)",
             sender: headers.find(h=>h.name==="From")?.value || "",
             date: headers.find(h=>h.name==="Date")?.value || "",
+            messageId: headers.find(h=>h.name?.toLowerCase()==="message-id")?.value || "",
           });
         } catch { /* skip a message we couldn't read metadata for */ }
       }
@@ -1066,6 +1067,7 @@ export default function App() {
         const subject = headers.find(h=>h.name==="Subject")?.value || "";
         const sender = headers.find(h=>h.name==="From")?.value || "";
         const date = headers.find(h=>h.name==="Date")?.value || "";
+        const messageId = headers.find(h=>h.name?.toLowerCase()==="message-id")?.value || "";
 
         // Decode body. Gmail's body data is base64url without padding —
         // atob() needs it re-padded to a multiple of 4 or it can throw on
@@ -1150,7 +1152,7 @@ export default function App() {
           // away — visible later as a badge in the rule's card, and always
           // viewable (live) via the "📁 תיקייה" folder page.
           const archived = ruleLabelId ? await archiveThreadToLabel(thread.id, ruleLabelId) : false;
-          newEntries.push({ id: thread.id, subject, sender, date, results, ruleId: rule.id, archived, status: null });
+          newEntries.push({ id: thread.id, messageId, subject, sender, date, results, ruleId: rule.id, archived, status: null });
         }
       }
       // Only "everything the search found was attempted this run" makes it
@@ -1224,7 +1226,7 @@ export default function App() {
         onProgress?.(`ממיינת מייל ${j+1} מתוך ${freshThreads.length}`);
         // Need Subject/From/Date for the log entry — a lightweight metadata
         // fetch, not the full message body (no summarization happening here).
-        const mRes = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, { headers: { Authorization: `Bearer ${gmailToken}` } });
+        const mRes = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date&metadataHeaders=Message-ID`, { headers: { Authorization: `Bearer ${gmailToken}` } });
         // A token that expires PARTWAY through a long backlog (very
         // plausible — the ~1hr Gmail token can die mid-loop on a big sort)
         // used to just fail every remaining thread one by one with a
@@ -1244,6 +1246,7 @@ export default function App() {
         const subject = headers.find(h=>h.name==="Subject")?.value || "(ללא נושא)";
         const sender = headers.find(h=>h.name==="From")?.value || "";
         const date = headers.find(h=>h.name==="Date")?.value || "";
+        const messageId = headers.find(h=>h.name?.toLowerCase()==="message-id")?.value || "";
 
         const ok = instruction.action === "delete"
           ? await trashThread(thread.id)
@@ -1257,7 +1260,7 @@ export default function App() {
           if (!localStorage.getItem("gmail_token")) { authExpired = true; stoppedEarly = true; break; }
           failures++; continue;
         }
-        newLogEntries.push({ id: thread.id, instructionId: instruction.id, subject, sender, date, action: instruction.action, labelName: instruction.labelName || gmailLabels.find(l=>l.id===instruction.labelId)?.name || null });
+        newLogEntries.push({ id: thread.id, messageId, instructionId: instruction.id, subject, sender, date, action: instruction.action, labelName: instruction.labelName || gmailLabels.find(l=>l.id===instruction.labelId)?.name || null });
       }
       // See the matching comment in runRuleSync — only safe to advance the
       // watermark if we made it through every fresh match without an early

@@ -219,15 +219,33 @@ export const buildGmailSearchQueries = (ruleLike) => {
   return queries;
 };
 
-// Deep link into Gmail's own web/app view for a given thread or message id —
-// used wherever a card shows an email we didn't render the full original of
-// (summary cards, the הוראות log, the folder viewer), so there's always a
-// way to actually open and read it. #all matches regardless of which
-// label/view the mail is currently under (inbox, archived, moved by a rule,
-// etc). u/0 assumes the first signed-in Google account, which covers the
-// common single-account case; a multi-account user may need to switch
-// accounts first if this opens the wrong inbox.
-export const gmailWebUrl = (id) => `https://mail.google.com/mail/u/0/#all/${id}`;
+// Deep link into Gmail's own web/app view for a given thread — used wherever
+// a card shows an email we didn't render the full original of (summary
+// cards, the הוראות log, the folder viewer), so there's always a way to
+// actually open and read it. u/0 assumes the first signed-in Google account,
+// which covers the common single-account case; a multi-account user may need
+// to switch accounts first if this opens the wrong inbox.
+//
+// Prefer the rfc822msgid search form (needs the email's real Message-ID
+// header, passed as messageId) over a bare #all/{threadId} link: on desktop
+// web both work, but on mobile, tapping a mail.google.com link hands off to
+// the native Gmail app via the OS's universal/app-link mechanism — and that
+// app opens straight to the inbox, ignoring a #all/{id} fragment entirely
+// (it just isn't a route the app parses). #search/rfc822msgid:<id> IS a
+// route the app understands, since it's the same query a manual search
+// would produce, so it actually lands on the one matching message instead.
+// Message-ID header values are wrapped in <angle brackets> — Gmail's search
+// syntax expects the id without them. Falls back to the old #all/{threadId}
+// form when no messageId is available (older stored entries from before
+// this field was captured), which at least still works from a desktop
+// browser.
+export const gmailWebUrl = (id, messageId) => {
+  if (messageId) {
+    const stripped = messageId.replace(/^</,"").replace(/>$/,"");
+    return `https://mail.google.com/mail/u/0/#search/rfc822msgid:${encodeURIComponent(stripped)}`;
+  }
+  return `https://mail.google.com/mail/u/0/#all/${id}`;
+};
 
 // "הוראות" — lightweight rules that ONLY sort-to-folder or trash matching
 // mail, with no AI summarization involved. Distinct from the summarization

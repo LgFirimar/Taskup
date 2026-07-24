@@ -68,7 +68,7 @@ export default function EmailInstructionsLog({ accent, emailInstructionLog, onBa
                       <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
                         <div style={{fontSize:13,fontWeight:600,color:"#1a1a2e",flex:1}}>{m.subject}</div>
                         {m.id&&(
-                          <a href={gmailWebUrl(m.id)} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:"#0077b6",fontWeight:700,whiteSpace:"nowrap",textDecoration:"none",flexShrink:0}}>📩 מייל מקורי</a>
+                          <a href={gmailWebUrl(m.id,m.messageId)} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:"#0077b6",fontWeight:700,whiteSpace:"nowrap",textDecoration:"none",flexShrink:0}}>📩 מייל מקורי</a>
                         )}
                       </div>
                     </div>
