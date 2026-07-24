@@ -13,6 +13,22 @@ export const DEFAULT_GMAIL_CLIENT_ID = import.meta.env.VITE_GMAIL_CLIENT_ID || "
 export const PRIO_CYCLE = [null, "green", "yellow", "red"];
 export const PRIO_COLOR = { green:"#4caf50", yellow:"#ffa726", red:"#ef5350" };
 
+// Wraps fetch with a timeout via AbortController. Plain fetch() has no
+// built-in timeout — a single stalled request (a network hiccup switching
+// wifi/cellular, a backgrounded PWA tab, spotty connectivity) leaves
+// whatever code is `await`-ing it hanging forever, with no error and
+// nothing to catch. That's what turned "sync a big mailbox" into
+// "stuck on the first instruction for hours" with no way to recover short
+// of force-closing the app: one single request inside a long per-thread
+// loop never resolved, and everything after it never got a chance to run.
+// Aborting after a timeout turns that into a normal, catchable rejection
+// instead, so a sync can report the failure and move on.
+export const fetchWithTimeout = (url, options = {}, timeoutMs = 20000) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+};
+
 export const TAB_COLORS = [
   "#2d6a4f","#1d4e89","#7b3f00","#5a189a",
   "#9d0208","#0077b6","#6a994e","#8338ec",

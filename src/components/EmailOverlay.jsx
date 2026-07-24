@@ -12,7 +12,7 @@ export default function EmailOverlay({
   gmailClientId, setGmailClientId, showClientIdInput, setShowClientIdInput, editGmailClientId,
   gmailToken, connectGmail, disconnectGmail, gmailAuthError, setGmailAuthError,
   emailRules, saveEmailRules, newRule, setNewRule, showNewRule, setShowNewRule,
-  emailLoading, fetchAndSummarize, emailStatusMsg, emailSyncProgress,
+  emailLoading, fetchAndSummarize, emailStatusMsg, emailSyncProgress, cancelEmailSync,
   gmailLabels, labelsLoading, labelsError, fetchGmailLabels, ensureRuleLabel,
   archiveErrorMsg, setArchiveErrorMsg,
   onOpenOverview,
@@ -436,7 +436,16 @@ export default function EmailOverlay({
         {/* Live progress — a "כל המיילים" sync can take a while since each
             sender/keyword alternative is its own paginated Gmail search. */}
         {emailLoading&&emailSyncProgress&&(
-          <div style={{fontSize:11,color:"#8a8a8a",textAlign:"center",marginBottom:20,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{emailSyncProgress}</div>
+          <div style={{fontSize:11,color:"#8a8a8a",textAlign:"center",marginBottom:8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{emailSyncProgress}</div>
+        )}
+
+        {/* Manual cancel — a backstop for when a sync seems to hang (e.g. a
+            stalled network request) or just takes too long; whatever was
+            already processed before cancelling stays saved. */}
+        {emailLoading&&(
+          <button onClick={cancelEmailSync} style={{width:"100%",background:"transparent",color:"#b91c1c",border:"1.5px solid #fca5a5",borderRadius:12,padding:"9px 0",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:20}}>
+            ⏹ בטלי סנכרון
+          </button>
         )}
 
         {/* Status message from the last sync attempt */}

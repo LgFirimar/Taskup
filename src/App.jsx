@@ -26,7 +26,7 @@ import { useVoiceCommands } from "./hooks/useVoiceCommands";
 import { usePushNotifications } from "./hooks/usePushNotifications";
 import {
   uid, STORAGE_KEY, WORKER_URL, PRIO_CYCLE, TAB_COLORS, DEFAULT_GMAIL_CLIENT_ID,
-  today, getReminderStatus, loadStorage, computeInitialAlerts, buildGmailSearchQueries,
+  today, getReminderStatus, loadStorage, computeInitialAlerts, buildGmailSearchQueries, fetchWithTimeout,
 } from "./utils";
 
 export default function App() {
@@ -140,6 +140,11 @@ export default function App() {
   // is its own paginated Gmail search — see buildGmailSearchQueries), so
   // without this the button just sits there spinning with no feedback.
   const [emailSyncProgress,setEmailSyncProgress] = useState("");
+  // Checked between/inside the sync loops below so a stuck-looking (or just
+  // genuinely huge) sync can actually be stopped instead of the only option
+  // being to force-close the app. A ref (not state) because it needs to be
+  // read synchronously inside async loops without waiting on a re-render.
+  const emailSyncCancelRef = useRef(false);
   const [showNewRule,setShowNewRule] = useState(false);
   const [newRule,setNewRule] = useState({sender:"",subject:"",formats:["bullets"]});
   // A manual override (saved per-browser) always wins; otherwise fall back to
@@ -770,7 +775,7 @@ export default function App() {
   const archiveThreadToLabel = async (threadId, labelId) => {
     if (!labelId) return false;
     try {
-      const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}/modify`, {
+      const res = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}/modify`, {
         method: "POST",
         headers: { Authorization: `Bearer ${gmailToken}`, "content-type": "application/json" },
         body: JSON.stringify({ addLabelIds: [labelId], removeLabelIds: ["INBOX"] }),
@@ -790,7 +795,7 @@ export default function App() {
   // extra scope.
   const trashThread = async (threadId) => {
     try {
-      const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}/trash`, {
+      const res = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}/trash`, {
         method: "POST",
         headers: { Authorization: `Bearer ${gmailToken}` },
       });
@@ -876,12 +881,13 @@ export default function App() {
     const threadMap = new Map();
     const queryDebugParts = [];
     for (const q of queries) {
+      if (emailSyncCancelRef.current) break;
       let pageToken;
       let pages = 0;
       let foundForQuery = 0;
       do {
         const url = `https://gmail.googleapis.com/gmail/v1/users/me/threads?q=${encodeURIComponent(q)}&maxResults=100${pageToken?`&pageToken=${encodeURIComponent(pageToken)}`:""}`;
-        const res = await fetch(url, { headers: { Authorization: `Bearer ${gmailToken}` } });
+        const res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${gmailToken}` } });
         if (res.status === 401) return { threadMap, queryDebugParts, authExpired: true };
         if (res.status === 403) {
           // 403 almost always means Gmail API access itself is blocked — not a
@@ -896,7 +902,7 @@ export default function App() {
         foundForQuery += (data.threads || []).length;
         pageToken = data.nextPageToken;
         pages++;
-      } while (pageToken && pages < MAX_PAGES_PER_QUERY);
+      } while (pageToken && pages < MAX_PAGES_PER_QUERY && !emailSyncCancelRef.current);
       queryDebugParts.push(`"${q}" → ${foundForQuery}`);
     }
     return { threadMap, queryDebugParts, authExpired: false };
@@ -956,7 +962,8 @@ export default function App() {
       // a time per "🔄 סכמי מיילים עכשיו" click) even though the SEARCH
       // above is no longer capped and now finds the whole backlog.
       for (const thread of freshThreads.slice(0, 3)) {
-        const tRes = await fetch(
+        if (emailSyncCancelRef.current) break;
+        const tRes = await fetchWithTimeout(
           `https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=full`,
           { headers: { Authorization: `Bearer ${gmailToken}` } }
         );
@@ -1015,11 +1022,14 @@ export default function App() {
           for (const fmt of formats) results[fmt] = "אין תוכן טקסטואלי במייל הזה לסיכום (המייל מבוסס כנראה כולו על תמונה/קובץ מצורף).";
         } else for (const fmt of formats) {
           try {
-            const sumRes = await fetch(`${WORKER_URL}/summarize-email`, {
+            // Longer timeout than the other sync-path calls — this one is an
+            // actual AI generation call, not a quick Gmail API round-trip, so
+            // a legitimately slow (not stuck) response needs more room.
+            const sumRes = await fetchWithTimeout(`${WORKER_URL}/summarize-email`, {
               method: "POST",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ subject, sender, body: body.slice(0,3000), format: fmt }),
-            });
+            }, 45000);
             if (!sumRes.ok) {
               let detail = "";
               try { const errBody = await sumRes.json(); detail = errBody?.error || ""; } catch { /* not JSON */ }
@@ -1098,9 +1108,10 @@ export default function App() {
       }
 
       for (const thread of freshThreads) {
+        if (emailSyncCancelRef.current) break;
         // Need Subject/From/Date for the log entry — a lightweight metadata
         // fetch, not the full message body (no summarization happening here).
-        const mRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, { headers: { Authorization: `Bearer ${gmailToken}` } });
+        const mRes = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, { headers: { Authorization: `Bearer ${gmailToken}` } });
         if (!mRes.ok) { failures++; continue; }
         const mData = await mRes.json();
         const headers = mData.messages?.[0]?.payload?.headers || [];
@@ -1122,8 +1133,17 @@ export default function App() {
     return { newLogEntries, failures, debugLine, authExpired, searchCompleted };
   };
 
+  // Stops an in-progress sync at the next safe checkpoint (between Gmail
+  // pages, threads, or rules/instructions — see the emailSyncCancelRef
+  // checks sprinkled through fetchAllMatchingThreads/runRuleSync/
+  // runInstructionSync/syncEmail) instead of it running until it either
+  // finishes or hangs. Whatever was already processed before the cancel
+  // stays saved — this is a graceful stop, not a rollback.
+  const cancelEmailSync = () => { emailSyncCancelRef.current = true; };
+
   const syncEmail = async () => {
     if (!gmailToken || (emailRules.length === 0 && emailInstructions.length === 0)) return;
+    emailSyncCancelRef.current = false;
     setEmailLoading(true);
     setEmailStatusMsg("");
     setEmailSyncProgress("");
@@ -1142,6 +1162,7 @@ export default function App() {
     // before it.
     let updatedRules = emailRules;
     for (let i = 0; i < emailRules.length; i++) {
+      if (emailSyncCancelRef.current) break;
       const rule = emailRules[i];
       const ruleLabel = [rule.sender&&`מ: ${rule.sender}`, rule.subject&&`מילים: ${rule.subject}`].filter(Boolean).join(" | ") || "(חוק ללא תנאים)";
       setEmailSyncProgress(`בודקת חוק ${i+1} מתוך ${emailRules.length}: ${ruleLabel}`);
@@ -1168,6 +1189,7 @@ export default function App() {
       const allNewLog = [];
       let updatedInstructions = emailInstructions;
       for (let i = 0; i < emailInstructions.length; i++) {
+        if (emailSyncCancelRef.current) break;
         const instruction = emailInstructions[i];
         const instrLabel = [instruction.sender&&`מ: ${instruction.sender}`, instruction.subject&&`מילים: ${instruction.subject}`].filter(Boolean).join(" | ") || "(הוראה ללא תנאים)";
         setEmailSyncProgress(`בודקת הוראה ${i+1} מתוך ${emailInstructions.length}: ${instrLabel}`);
@@ -1181,10 +1203,13 @@ export default function App() {
       if (updatedInstructions !== emailInstructions) saveEmailInstructions(updatedInstructions);
     }
 
+    const wasCancelled = emailSyncCancelRef.current;
     setEmailSyncProgress("");
     if (!authExpired) {
       let msg = "";
-      if (emailRules.length > 0 && allNew.length === 0) {
+      if (wasCancelled) {
+        msg = "הסנכרון בוטל. מה שכבר טופל עד כה נשמר — אפשר להריץ שוב כדי להמשיך מאיפה שהפסקת.";
+      } else if (emailRules.length > 0 && allNew.length === 0) {
         if (threadsFound === 0) {
           msg = "לא נמצאו מיילים תואמים לחוקים. בדקי שהשולח/הנושא מדויקים, או סמני \"כל המיילים\" בעריכת החוק — כברירת מחדל מחפשים רק 30 ימים אחורה.\n\nפירוט לפי חוק:\n"
             + ruleDebug.map(d=>`• ${d}`).join("\n");
@@ -1686,7 +1711,7 @@ export default function App() {
             gmailClientId={gmailClientId} setGmailClientId={setGmailClientId} showClientIdInput={showClientIdInput} setShowClientIdInput={setShowClientIdInput} editGmailClientId={editGmailClientId}
             gmailToken={gmailToken} connectGmail={connectGmail} disconnectGmail={disconnectGmail} gmailAuthError={gmailAuthError} setGmailAuthError={setGmailAuthError}
             emailRules={emailRules} saveEmailRules={saveEmailRules} newRule={newRule} setNewRule={setNewRule} showNewRule={showNewRule} setShowNewRule={setShowNewRule}
-            emailLoading={emailLoading} fetchAndSummarize={syncEmail} emailStatusMsg={emailStatusMsg} emailSyncProgress={emailSyncProgress}
+            emailLoading={emailLoading} fetchAndSummarize={syncEmail} emailStatusMsg={emailStatusMsg} emailSyncProgress={emailSyncProgress} cancelEmailSync={cancelEmailSync}
             gmailLabels={gmailLabels} labelsLoading={labelsLoading} labelsError={labelsError} fetchGmailLabels={fetchGmailLabels} ensureRuleLabel={ensureRuleLabel}
             archiveErrorMsg={archiveErrorMsg} setArchiveErrorMsg={setArchiveErrorMsg}
             onOpenOverview={openEmailOverview}
