@@ -95,6 +95,41 @@ export const urlBase64ToUint8Array = (base64String) => {
   return outputArray;
 };
 
+// localStorage has a hard quota (~5-10MB, often smaller in a Safari/iOS
+// PWA) — and emailSummaries is the one collection that can realistically
+// grow into it: every entry keeps the FULL AI-generated text forever, and a
+// rule with a big backlog (dateAll + a per-sync cap that only lets 3 new
+// ones through at a time — see runRuleSync in App.jsx) means it just keeps
+// growing, sync after sync, with no natural ceiling. Once a write exceeds
+// the quota, localStorage.setItem THROWS — and since that write never
+// happens, anything from that point on (new entries, and any done/pending
+// mark on existing ones) silently never gets persisted, even though it
+// looked fine in the live session; a later reload (routine on a mobile PWA
+// after backgrounding) then goes back to whatever was last successfully
+// saved, and everything since looks freshly "new" again.
+//
+// The actual page content of a "done" entry has no remaining purpose once
+// it's done — its only remaining job is to keep the thread out of the
+// "new" list — so that's the first, biggest, and safest thing to reclaim.
+// Called from the persistence effect on a caught QuotaExceededError; each
+// call is strictly more aggressive than a plain "leave it alone" no-op, so
+// repeated calls (as React re-runs the effect after each state update)
+// converge instead of looping forever. Returns { pruned, giveUp } — giveUp
+// is true only once nothing is left to safely shrink (list already at 1
+// item), so the caller can stop retrying and surface a real error instead
+// of spinning.
+export const pruneEmailSummariesForQuota = (list) => {
+  const hasText = (s) => s.results && Object.keys(s.results).length > 0;
+  const stripStatus = (status) => list.map(s => (s.status === status && hasText(s)) ? { ...s, results: {}, prunedForSpace: true } : s);
+  if (list.some(s => s.status === "done" && hasText(s))) return { pruned: stripStatus("done"), giveUp: false };
+  if (list.some(s => s.status === "pending" && hasText(s))) return { pruned: stripStatus("pending"), giveUp: false };
+  if (list.length <= 1) return { pruned: list, giveUp: true };
+  // Last resort: everything left is "new" (still full text, still needed)
+  // and there's more than one — drop the oldest half outright rather than
+  // get stuck unable to save anything at all.
+  return { pruned: list.slice(Math.floor(list.length / 2)), giveUp: false };
+};
+
 // Shared between EmailOverlay, EmailSummariesOverview and EmailRuleDetail so
 // format labels/order stay consistent everywhere a rule's formats are shown.
 export const EMAIL_FORMAT_OPTIONS = [["bullets","• נקודות"],["summary","📝 סיכום"],["tasks","✅ משימות"],["dates","📅 תאריכים"]];

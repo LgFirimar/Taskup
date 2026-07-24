@@ -84,6 +84,7 @@ export default function EmailRuleDetail({
                 );
               })}
               {s.archived&&<div style={{marginTop:10,fontSize:11,color:"#2d6a4f",fontWeight:600}}>📥 הועבר לתיקייה</div>}
+              {s.prunedForSpace&&<div style={{marginTop:10,fontSize:11,color:"#b8860b",fontWeight:600}}>🗜️ תוכן הסיכום המלא נוקה אוטומטית כדי לפנות מקום באחסון (הסימון עצמו נשאר)</div>}
               <div style={{display:"flex",gap:8,marginTop:12}}>
                 {tab==="new"&&(<>
                   <button onClick={()=>onSetStatus(s.id,"done")} style={{flex:1,background:"#2d6a4f",color:"white",border:"none",borderRadius:10,padding:"7px 0",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>✓ בוצע</button>

@@ -27,6 +27,7 @@ import { usePushNotifications } from "./hooks/usePushNotifications";
 import {
   uid, STORAGE_KEY, WORKER_URL, PRIO_CYCLE, TAB_COLORS, DEFAULT_GMAIL_CLIENT_ID,
   today, getReminderStatus, loadStorage, computeInitialAlerts, buildGmailSearchQueries, fetchWithTimeout,
+  pruneEmailSummariesForQuota,
 } from "./utils";
 
 export default function App() {
@@ -284,11 +285,48 @@ export default function App() {
   const settingsMenuRef = useRef(null);
 
   useEffect(()=>{
-    localStorage.setItem(STORAGE_KEY,JSON.stringify({profiles,activeProfile:activeProfileId}));
+    try {
+      localStorage.setItem(STORAGE_KEY,JSON.stringify({profiles,activeProfile:activeProfileId}));
+    } catch (e) {
+      // Lower risk than email_summaries (no large AI text here), but a
+      // silent failure here would be worse — tasks/reminders — so at least
+      // surface it instead of losing changes with no visible sign.
+      console.error("main storage persist failed", e);
+    }
   },[profiles,activeProfileId]);
 
+  // This is the one collection realistically at risk of exceeding
+  // localStorage's quota (~5-10MB, can be tighter in a Safari/iOS PWA) —
+  // see pruneEmailSummariesForQuota in utils.js for the full reasoning. A
+  // failed write here isn't just "this save didn't happen": it silently
+  // freezes ALL future saves to this key too (every subsequent render's
+  // write throws the same way), so anything synced or marked done/pending
+  // after the quota was first hit only ever existed in memory for that one
+  // session — a later reload (routine on a backgrounded mobile PWA) goes
+  // back to whatever was last actually saved, and it all looks freshly
+  // "new" again. That silent-freeze is exactly what this component's user
+  // reported. Catching it and pruning the heaviest, safest-to-drop content
+  // (full AI text on already-"done" entries — see the helper) keeps saves
+  // working instead of failing forever.
   useEffect(()=>{
-    localStorage.setItem("email_summaries",JSON.stringify(emailSummaries));
+    try {
+      localStorage.setItem("email_summaries",JSON.stringify(emailSummaries));
+    } catch (e) {
+      if (e?.name !== "QuotaExceededError" && e?.code !== 22) { console.error("email_summaries persist failed", e); return; }
+      // Deferred via setTimeout (same pattern as elsewhere in this file) so
+      // the setState calls happen outside the effect's synchronous body.
+      setTimeout(() => {
+        const { pruned, giveUp } = pruneEmailSummariesForQuota(emailSummaries);
+        if (giveUp) {
+          console.error("email_summaries: quota exceeded with nothing left to prune");
+          setEmailStatusMsg("אין מקום פנוי במכשיר לשמור את המיילים המסוכמים — נסי לגבות ל-Google Drive ואז לפנות מקום באחסון המכשיר.");
+          return;
+        }
+        console.warn("email_summaries: localStorage quota exceeded, pruning old summary text to free space");
+        setEmailStatusMsg("האחסון במכשיר התמלא — כדי לפנות מקום נוקה אוטומטית תוכן הסיכום המלא ממיילים ישנים שכבר סומנו כ\"בוצע\"/\"ממתין\" (הרשומה עצמה, כולל הסימון, נשארה). מומלץ לגבות ל-Google Drive.");
+        setEmailSummaries(pruned);
+      }, 0);
+    }
   },[emailSummaries]);
 
   useEffect(()=>{
@@ -296,7 +334,11 @@ export default function App() {
   },[emailInstructions]);
 
   useEffect(()=>{
-    localStorage.setItem("email_instruction_log",JSON.stringify(emailInstructionLog));
+    try {
+      localStorage.setItem("email_instruction_log",JSON.stringify(emailInstructionLog));
+    } catch (e) {
+      console.error("email_instruction_log persist failed", e);
+    }
   },[emailInstructionLog]);
 
   useEffect(()=>{
@@ -1437,7 +1479,14 @@ export default function App() {
     setBackupInProgress(true);
     setDriveAuthError("");
     try {
-      const content = JSON.stringify({ profiles, activeProfile: activeProfileId, emailRules, customVoiceCommands }, null, 2);
+      // emailSummaries/emailInstructions/emailInstructionLog used to be left
+      // out of every backup (export AND Drive) entirely — meaning a restore
+      // silently wiped all AI summaries and done/pending marks, and there
+      // was never a real off-device safety net for them even though
+      // emailSummaries is the one collection at real risk of hitting
+      // localStorage's own quota (see pruneEmailSummariesForQuota in
+      // utils.js). Now included so a backup is actually complete.
+      const content = JSON.stringify({ profiles, activeProfile: activeProfileId, emailRules, customVoiceCommands, emailSummaries, emailInstructions, emailInstructionLog }, null, 2);
       let fileId = driveFileId;
       if (!fileId) fileId = await findBackupFileId(driveToken);
 
@@ -1497,6 +1546,9 @@ export default function App() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ profiles: data.profiles, activeProfile: data.activeProfile }));
       if (data.emailRules) localStorage.setItem("email_rules", JSON.stringify(data.emailRules));
       if (data.customVoiceCommands) localStorage.setItem("voice_custom_commands", JSON.stringify(data.customVoiceCommands));
+      if (data.emailSummaries) localStorage.setItem("email_summaries", JSON.stringify(data.emailSummaries));
+      if (data.emailInstructions) localStorage.setItem("email_instructions", JSON.stringify(data.emailInstructions));
+      if (data.emailInstructionLog) localStorage.setItem("email_instruction_log", JSON.stringify(data.emailInstructionLog));
       window.location.reload();
     } catch(err) {
       console.error("restoreFromDrive failed",err);
@@ -1540,7 +1592,7 @@ export default function App() {
 
   // ── Backup / share ─────────────────────────────────────────────────────────
   const exportBackup = ()=>{
-    const blob=new Blob([JSON.stringify({profiles,activeProfile:activeProfileId,emailRules,customVoiceCommands},null,2)],{type:"application/json"});
+    const blob=new Blob([JSON.stringify({profiles,activeProfile:activeProfileId,emailRules,customVoiceCommands,emailSummaries,emailInstructions,emailInstructionLog},null,2)],{type:"application/json"});
     const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`taskup-backup-${today()}.json`; a.click();
     setShowSettingsMenu(false);
   };
@@ -1553,6 +1605,9 @@ export default function App() {
         localStorage.setItem(STORAGE_KEY,JSON.stringify({profiles:d.profiles,activeProfile:d.activeProfile}));
         if(d.emailRules) localStorage.setItem("email_rules",JSON.stringify(d.emailRules));
         if(d.customVoiceCommands) localStorage.setItem("voice_custom_commands",JSON.stringify(d.customVoiceCommands));
+        if(d.emailSummaries) localStorage.setItem("email_summaries",JSON.stringify(d.emailSummaries));
+        if(d.emailInstructions) localStorage.setItem("email_instructions",JSON.stringify(d.emailInstructions));
+        if(d.emailInstructionLog) localStorage.setItem("email_instruction_log",JSON.stringify(d.emailInstructionLog));
         window.location.reload();
       }catch{alert("קובץ גיבוי לא תקין");}};
       reader.readAsText(e.target.files[0]);
