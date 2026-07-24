@@ -39,6 +39,16 @@ export default function EmailOverlay({
     return next;
   });
 
+  // Same collapse-behind-one-toggle treatment for the summarization rules
+  // list, for the same reason.
+  const [showRulesList, setShowRulesList] = useState(false);
+  const [expandedRuleIds, setExpandedRuleIds] = useState(() => new Set());
+  const toggleRuleExpanded = (id) => setExpandedRuleIds(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
   const saveRule = () => {
     if(!newRule.sender&&!newRule.subject)return;
     const toSave = {...newRule, formats: ruleFormats(newRule)};
@@ -56,6 +66,10 @@ export default function EmailOverlay({
     if (!toSave.archiveLabelId && toSave.archiveLabelName) ensureRuleLabel(toSave);
     setNewRule({sender:"",subject:"",formats:["bullets"],dateFrom:"",dateAll:false});
     setShowNewRule(false);
+    // Open the (possibly still-collapsed) list right away so saving actually
+    // shows the result, same reasoning as saveInstruction() below.
+    setShowRulesList(true);
+    setExpandedRuleIds(prev => new Set(prev).add(toSave.id));
   };
 
   const saveInstruction = () => {
@@ -149,6 +163,17 @@ export default function EmailOverlay({
           <button onClick={()=>{setNewRule({sender:"",subject:"",formats:["bullets"],dateFrom:"",dateAll:false});setShowNewRule(true);}} style={{background:accent,color:"white",border:"none",borderRadius:10,padding:"5px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>+ חוק חדש</button>
         </div>
 
+        {emailRules.length>0&&(
+          <button
+            onClick={()=>setShowRulesList(v=>!v)}
+            aria-expanded={showRulesList}
+            style={{width:"100%",background:"none",border:"1.5px solid #dde",borderRadius:12,color:"#555",padding:"8px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginBottom:12,display:"flex",alignItems:"center",justifyContent:"space-between"}}
+          >
+            <span>חוקים קיימים ({emailRules.length})</span>
+            <span style={{display:"inline-block",transition:"transform 0.15s",transform:showRulesList?"rotate(180deg)":"none"}}>▾</span>
+          </button>
+        )}
+
         {showNewRule&&(
           <div style={{background:"white",borderRadius:14,padding:16,marginBottom:12,boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
@@ -231,26 +256,44 @@ export default function EmailOverlay({
           </div>
         )}
 
-        {emailRules.map(rule=>(
-          <div key={rule.id} style={{background:"white",borderRadius:12,padding:"12px 14px",marginBottom:8,boxShadow:"0 1px 6px rgba(0,0,0,0.05)",display:"flex",alignItems:"center",gap:10,borderRight:`3px solid ${accent}`}}>
-            <div style={{flex:1}}>
-              {rule.sender&&<div style={{fontSize:13,fontWeight:600}}>מ: {rule.sender}</div>}
-              {rule.subject&&<div style={{fontSize:12,color:"#888"}}>מילות מפתח: {rule.subject} ({rule.searchScope==="all"?"כותרת+תוכן":"כותרת בלבד"})</div>}
-              <div style={{fontSize:11,color:accent,marginTop:2}}>
-                {ruleFormats(rule).map(f=>EMAIL_FORMAT_LABELS[f]||f).join(" + ")}
-                {" • "}
-                {rule.dateAll?"כל המיילים":rule.dateFrom?`מ-${formatDate(rule.dateFrom)}`:"30 ימים אחרונים"}
-              </div>
-              {(rule.archiveLabelId||rule.archiveLabelName)&&(
-                <div style={{fontSize:11,color:"#0077b6",marginTop:2}}>
-                  📥 {rule.archiveAuto?"מועבר אוטומטית לתיקיית":"אפשרות להעביר לתיקיית"} "{gmailLabels.find(l=>l.id===rule.archiveLabelId)?.name||rule.archiveLabelName||"?"}"
+        {showRulesList&&emailRules.map(rule=>{
+          const isExpanded = expandedRuleIds.has(rule.id);
+          const summary = [rule.sender&&`מ: ${rule.sender}`, rule.subject&&`מילים: ${rule.subject}`].filter(Boolean).join(" | ") || "(חוק ללא תנאים)";
+          return (
+            <div key={rule.id} style={{background:"white",borderRadius:12,marginBottom:8,boxShadow:"0 1px 6px rgba(0,0,0,0.05)",borderRight:`3px solid ${accent}`,overflow:"hidden"}}>
+              <button
+                onClick={()=>toggleRuleExpanded(rule.id)}
+                aria-expanded={isExpanded}
+                aria-label={isExpanded?"כווץ חוק":"הרחב חוק"}
+                style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background:"none",border:"none",cursor:"pointer",textAlign:"right",fontFamily:"'Heebo',sans-serif"}}
+              >
+                <span style={{flex:1,fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{summary}</span>
+                <span style={{fontSize:11,color:accent,flexShrink:0}}>{ruleFormats(rule).map(f=>EMAIL_FORMAT_LABELS[f]||f).join(" + ")}</span>
+                <span style={{fontSize:12,color:"#8a8a8a",flexShrink:0,display:"inline-block",transition:"transform 0.15s",transform:isExpanded?"rotate(180deg)":"none"}}>▾</span>
+              </button>
+              {isExpanded&&(
+                <div style={{display:"flex",alignItems:"center",gap:10,padding:"0 14px 12px"}}>
+                  <div style={{flex:1}}>
+                    {rule.sender&&<div style={{fontSize:13,fontWeight:600}}>מ: {rule.sender}</div>}
+                    {rule.subject&&<div style={{fontSize:12,color:"#888"}}>מילות מפתח: {rule.subject} ({rule.searchScope==="all"?"כותרת+תוכן":"כותרת בלבד"})</div>}
+                    <div style={{fontSize:11,color:accent,marginTop:2}}>
+                      {ruleFormats(rule).map(f=>EMAIL_FORMAT_LABELS[f]||f).join(" + ")}
+                      {" • "}
+                      {rule.dateAll?"כל המיילים":rule.dateFrom?`מ-${formatDate(rule.dateFrom)}`:"30 ימים אחרונים"}
+                    </div>
+                    {(rule.archiveLabelId||rule.archiveLabelName)&&(
+                      <div style={{fontSize:11,color:"#0077b6",marginTop:2}}>
+                        📥 {rule.archiveAuto?"מועבר אוטומטית לתיקיית":"אפשרות להעביר לתיקיית"} "{gmailLabels.find(l=>l.id===rule.archiveLabelId)?.name||rule.archiveLabelName||"?"}"
+                      </div>
+                    )}
+                  </div>
+                  <button onClick={()=>{setNewRule({sender:"",subject:"",dateFrom:"",dateAll:false,...rule,formats:ruleFormats(rule)});setShowNewRule(true);}} style={{background:"none",border:"none",color:"#8a8a8a",cursor:"pointer",fontSize:15}} aria-label="ערוך חוק">✎</button>
+                  <button onClick={()=>saveEmailRules(emailRules.filter(r=>r.id!==rule.id))} style={{background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:16}} aria-label="מחק חוק">✕</button>
                 </div>
               )}
             </div>
-            <button onClick={()=>{setNewRule({sender:"",subject:"",dateFrom:"",dateAll:false,...rule,formats:ruleFormats(rule)});setShowNewRule(true);}} style={{background:"none",border:"none",color:"#8a8a8a",cursor:"pointer",fontSize:15}} aria-label="ערוך חוק">✎</button>
-            <button onClick={()=>saveEmailRules(emailRules.filter(r=>r.id!==rule.id))} style={{background:"none",border:"none",color:"#dde",cursor:"pointer",fontSize:16}} aria-label="מחק חוק">✕</button>
-          </div>
-        ))}
+          );
+        })}
 
         {emailRules.length===0&&<div className="empty-state" style={{marginBottom:16}}>הגדירי חוק כדי להתחיל</div>}
 
