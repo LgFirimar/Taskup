@@ -1234,7 +1234,7 @@ export default function App() {
       // a turn no matter how many times "סכמי מיילים עכשיו" was pressed.
       // Capping guarantees every instruction gets touched every sync click,
       // even if a huge one takes several clicks to fully drain.
-      const capped = freshThreads.slice(0, 100);
+      const capped = freshThreads.slice(0, 500);
       let stoppedEarly = false;
       for (let j = 0; j < capped.length; j++) {
         const thread = capped[j];
@@ -1282,7 +1282,7 @@ export default function App() {
         }
         const logEntry = { id: thread.id, messageId, instructionId: instruction.id, subject, sender, date, action: instruction.action, labelName: instruction.labelName || gmailLabels.find(l=>l.id===instruction.labelId)?.name || null };
         newLogEntries.push(logEntry);
-        // Persist THIS ONE processed email immediately — even capped to 100,
+        // Persist THIS ONE processed email immediately — even capped to 500,
         // a slow mobile connection can still die mid-loop (tab backgrounded,
         // network drop, page reload). Without this, an interruption partway
         // through even a single instruction's capped batch lost everything
@@ -1296,7 +1296,7 @@ export default function App() {
       // attempted this run. The cap above (same as a cancel or a token
       // dying mid-loop) can leave older backlog mail unattempted — leaving
       // fullyDrained false in that case means the next sync re-lists the
-      // same remaining backlog and keeps working through it 100 at a time,
+      // same remaining backlog and keeps working through it 500 at a time,
       // instead of silently losing anything past the cap.
       fullyDrained = freshThreads.length <= capped.length && !stoppedEarly;
     } catch (e) {
