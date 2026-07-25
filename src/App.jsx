@@ -134,6 +134,11 @@ export default function App() {
   // where status is null (untouched) | "pending" | "done".
   const [emailSummaries,setEmailSummaries] = useState(()=>{ try{return JSON.parse(localStorage.getItem("email_summaries"))||[];}catch{return[];} });
   const [emailLoading,setEmailLoading] = useState(false);
+  // Which of the two sync buttons ("🔄 סכמי מיילים" / "📋 מייני לפי הוראות")
+  // is the one actually running — so only THAT button shows the spinner
+  // while the other just sits disabled, instead of both looking like
+  // they're loading whenever either one is.
+  const [emailSyncMode,setEmailSyncMode] = useState(null);
   const [emailStatusMsg,setEmailStatusMsg] = useState("");
   // What syncEmail is doing RIGHT NOW — shown next to the spinner while
   // emailLoading is true, e.g. "בודקת הוראה 3 מתוך 11: מ: shanibar". A big
@@ -1316,74 +1321,99 @@ export default function App() {
   // stays saved — this is a graceful stop, not a rollback.
   const cancelEmailSync = () => { emailSyncCancelRef.current = true; };
 
-  const syncEmail = async () => {
-    if (!gmailToken || (emailRules.length === 0 && emailInstructions.length === 0)) return;
+  // mode lets the two sync buttons ("🔄 סכמי מיילים" and "📋 מייני לפי
+  // הוראות") each run just their own half instead of always doing both —
+  // summarizing (AI, costs time+money per email) and sorting/deleting
+  // (instant, no AI) are different-enough operations in practice that
+  // running one shouldn't force waiting on the other. "all" (the default)
+  // keeps the original combined behavior for any other caller.
+  const syncEmail = async (mode = "all") => {
+    const doRules = mode !== "instructions";
+    const doInstructions = mode !== "rules";
+    const hasWork = (doRules && emailRules.length > 0) || (doInstructions && emailInstructions.length > 0);
+    if (!gmailToken || !hasWork) return;
     emailSyncCancelRef.current = false;
     setEmailLoading(true);
+    setEmailSyncMode(mode);
     setEmailStatusMsg("");
     setEmailSyncProgress("");
     let authExpired = false;
     const nowIso = new Date().toISOString();
 
-    const existingKeys = new Set(emailSummaries.map(s => `${s.ruleId}:${s.id}`));
     let anyNewSummary = false;
     let threadsFound = 0;
     let summarizeFailures = 0;
     const ruleDebug = [];
     const summarizeFailureDetails = [];
-    // Accumulated locally (not re-read from React state each iteration) so
-    // every rule's lastSyncedAt update survives, instead of each
-    // iteration's saveEmailRules call clobbering the one before it.
-    let updatedRules = emailRules;
-    for (let i = 0; i < emailRules.length; i++) {
-      if (emailSyncCancelRef.current) break;
-      const rule = emailRules[i];
-      const ruleLabel = [rule.sender&&`מ: ${rule.sender}`, rule.subject&&`מילים: ${rule.subject}`].filter(Boolean).join(" | ") || "(חוק ללא תנאים)";
-      const baseMsg = `בודקת חוק ${i+1} מתוך ${emailRules.length}: ${ruleLabel}`;
-      setEmailSyncProgress(baseMsg);
-      // Persist EACH summarized email — and each rule's own watermark — the
-      // moment it's ready, not batched until every rule (and every
-      // instruction after it) finishes. On a slow/mobile connection it's
-      // common for the sync to get interrupted partway through a long run
-      // (tab backgrounded, network drop, page reload) — without this, an
-      // interruption ANYWHERE lost everything back to the start of the
-      // whole run, which is exactly what made progress look stuck at the
-      // same rule/instruction no matter how many times it was retried.
-      const onEntry = (entry) => {
-        setEmailSummaries(prev => [...prev, entry]);
-        existingKeys.add(`${entry.ruleId}:${entry.id}`);
-        anyNewSummary = true;
-      };
-      const result = await runRuleSync(rule, existingKeys, (detail) => setEmailSyncProgress(`${baseMsg} — ${detail}`), onEntry);
-      if (result.authExpired) { authExpired = true; break; }
-      threadsFound += result.threadsFoundCount;
-      summarizeFailures += result.failures;
-      if (result.debugLine) ruleDebug.push(result.debugLine);
-      if (result.failureDetails?.length) summarizeFailureDetails.push(...result.failureDetails);
-      // Advance this rule's watermark ONLY once everything the search found
-      // was actually attempted this run (fullyDrained) — not just once the
-      // search itself finished. The search can find far more than the
-      // intentional per-sync cap of 3 processes, or a cancel can cut the
-      // capped loop short — either way, advancing the watermark anyway
-      // would make that leftover backlog mail permanently invisible to any
-      // future search (which only looks for mail newer than the
-      // watermark). See runRuleSync's own comment for the full reasoning.
-      // Saved right away too, same reasoning as onEntry above.
-      if (result.fullyDrained) {
-        updatedRules = updatedRules.map(r => r.id===rule.id ? {...r, lastSyncedAt: nowIso} : r);
-        saveEmailRules(updatedRules);
+    if (doRules) {
+      const existingKeys = new Set(emailSummaries.map(s => `${s.ruleId}:${s.id}`));
+      // Accumulated locally (not re-read from React state each iteration) so
+      // every rule's lastSyncedAt update survives, instead of each
+      // iteration's saveEmailRules call clobbering the one before it.
+      let updatedRules = emailRules;
+      for (let i = 0; i < emailRules.length; i++) {
+        if (emailSyncCancelRef.current) break;
+        const rule = emailRules[i];
+        const ruleLabel = [rule.sender&&`מ: ${rule.sender}`, rule.subject&&`מילים: ${rule.subject}`].filter(Boolean).join(" | ") || "(חוק ללא תנאים)";
+        const baseMsg = `בודקת חוק ${i+1} מתוך ${emailRules.length}: ${ruleLabel}`;
+        setEmailSyncProgress(baseMsg);
+        // Persist EACH summarized email — and each rule's own watermark — the
+        // moment it's ready, not batched until every rule (and every
+        // instruction after it) finishes. On a slow/mobile connection it's
+        // common for the sync to get interrupted partway through a long run
+        // (tab backgrounded, network drop, page reload) — without this, an
+        // interruption ANYWHERE lost everything back to the start of the
+        // whole run, which is exactly what made progress look stuck at the
+        // same rule/instruction no matter how many times it was retried.
+        const onEntry = (entry) => {
+          setEmailSummaries(prev => [...prev, entry]);
+          existingKeys.add(`${entry.ruleId}:${entry.id}`);
+          anyNewSummary = true;
+        };
+        const result = await runRuleSync(rule, existingKeys, (detail) => setEmailSyncProgress(`${baseMsg} — ${detail}`), onEntry);
+        if (result.authExpired) { authExpired = true; break; }
+        threadsFound += result.threadsFoundCount;
+        summarizeFailures += result.failures;
+        if (result.debugLine) ruleDebug.push(result.debugLine);
+        if (result.failureDetails?.length) summarizeFailureDetails.push(...result.failureDetails);
+        // Advance this rule's watermark ONLY once everything the search found
+        // was actually attempted this run (fullyDrained) — not just once the
+        // search itself finished. The search can find far more than the
+        // intentional per-sync cap of 3 processes, or a cancel can cut the
+        // capped loop short — either way, advancing the watermark anyway
+        // would make that leftover backlog mail permanently invisible to any
+        // future search (which only looks for mail newer than the
+        // watermark). See runRuleSync's own comment for the full reasoning.
+        // Saved right away too, same reasoning as onEntry above.
+        if (result.fullyDrained) {
+          updatedRules = updatedRules.map(r => r.id===rule.id ? {...r, lastSyncedAt: nowIso} : r);
+          saveEmailRules(updatedRules);
+        }
       }
     }
 
     let instructionsProcessed = 0;
-    if (!authExpired) {
+    if (doInstructions && !authExpired) {
       const existingInstructionKeys = new Set(emailInstructionLog.map(e => `${e.instructionId}:${e.id}`));
       let updatedInstructions = emailInstructions;
-      for (let i = 0; i < emailInstructions.length; i++) {
+      // Run every "folder" (and any other non-delete) instruction before any
+      // "delete" instruction, regardless of the order they were created in.
+      // Gmail's default search (what buildGmailSearchQueries relies on)
+      // already excludes Trash — so once a delete instruction trashes a
+      // thread, no OTHER instruction can ever find that same thread again to
+      // also file it into a folder, even if its own criteria would have
+      // matched. Two "folder" instructions matching the same mail already
+      // both apply fine (Gmail labels aren't exclusive folders — a thread
+      // can carry several at once); this ordering just makes sure a delete
+      // instruction never gets to a shared match FIRST and closes off every
+      // other instruction's chance at it. A plain stable sort preserves each
+      // group's original relative order, it only demotes deletes to the end.
+      const instructionsInOrder = [...emailInstructions].sort((a, b) => (a.action === "delete" ? 1 : 0) - (b.action === "delete" ? 1 : 0));
+      for (let i = 0; i < instructionsInOrder.length; i++) {
         if (emailSyncCancelRef.current) break;
-        const instruction = emailInstructions[i];
+        const instruction = instructionsInOrder[i];
         const instrLabel = [instruction.sender&&`מ: ${instruction.sender}`, instruction.subject&&`מילים: ${instruction.subject}`].filter(Boolean).join(" | ") || "(הוראה ללא תנאים)";
-        const baseMsg = `בודקת הוראה ${i+1} מתוך ${emailInstructions.length}: ${instrLabel}`;
+        const baseMsg = `בודקת הוראה ${i+1} מתוך ${instructionsInOrder.length}: ${instrLabel}`;
         setEmailSyncProgress(baseMsg);
         // Same reasoning as onEntry above — an instruction's own loop is
         // uncapped (see runInstructionSync's comment), so on a big backlog
@@ -1414,28 +1444,39 @@ export default function App() {
       let msg = "";
       if (wasCancelled) {
         msg = "הסנכרון בוטל. מה שכבר טופל עד כה נשמר — אפשר להריץ שוב כדי להמשיך מאיפה שהפסקת.";
-      } else if (emailRules.length > 0 && !anyNewSummary) {
-        if (threadsFound === 0) {
-          msg = "לא נמצאו מיילים תואמים לחוקים. בדקי שהשולח/הנושא מדויקים, או סמני \"כל המיילים\" בעריכת החוק — כברירת מחדל מחפשים רק 30 ימים אחורה.\n\nפירוט לפי חוק:\n"
-            + ruleDebug.map(d=>`• ${d}`).join("\n");
-        } else if (summarizeFailures > 0) {
-          // Surface the actual failure (HTTP status / server error / thrown
-          // network error) instead of a generic "something failed" — this is
-          // the only way to tell a rate limit, a CORS rejection, and an AI
-          // error on the worker apart from the phone, with no server logs.
-          msg = "נמצאו מיילים תואמים, אבל הסיכום נכשל.\n\nפירוט:\n"
-            + [...new Set(summarizeFailureDetails)].slice(0,5).map(d=>`• ${d}`).join("\n")
-            + "\n\nנסי שוב בעוד רגע — אם זה ממשיך לקרות, שלחי את הפירוט הזה.";
-        } else {
-          msg = "נמצאו מיילים תואמים, אבל כבר נסרקו קודם — אין חדש. אפשר לראות אותם ב\"מיילים מסוכמים\".";
+      } else {
+        if (doRules && emailRules.length > 0 && !anyNewSummary) {
+          if (threadsFound === 0) {
+            msg = "לא נמצאו מיילים תואמים לחוקים. בדקי שהשולח/הנושא מדויקים, או סמני \"כל המיילים\" בעריכת החוק — כברירת מחדל מחפשים רק 30 ימים אחורה.\n\nפירוט לפי חוק:\n"
+              + ruleDebug.map(d=>`• ${d}`).join("\n");
+          } else if (summarizeFailures > 0) {
+            // Surface the actual failure (HTTP status / server error / thrown
+            // network error) instead of a generic "something failed" — this is
+            // the only way to tell a rate limit, a CORS rejection, and an AI
+            // error on the worker apart from the phone, with no server logs.
+            msg = "נמצאו מיילים תואמים, אבל הסיכום נכשל.\n\nפירוט:\n"
+              + [...new Set(summarizeFailureDetails)].slice(0,5).map(d=>`• ${d}`).join("\n")
+              + "\n\nנסי שוב בעוד רגע — אם זה ממשיך לקרות, שלחי את הפירוט הזה.";
+          } else {
+            msg = "נמצאו מיילים תואמים, אבל כבר נסרקו קודם — אין חדש. אפשר לראות אותם ב\"מיילים מסוכמים\".";
+          }
         }
-      }
-      if (instructionsProcessed > 0) {
-        msg = (msg ? msg + "\n\n" : "") + `בנוסף: ${instructionsProcessed} מיילים טופלו לפי ההוראות. אפשר לראות אותם ב"הוראות".`;
+        if (doInstructions) {
+          if (instructionsProcessed > 0) {
+            msg = (msg ? msg + "\n\n" : "") + `${mode === "instructions" ? "" : "בנוסף: "}${instructionsProcessed} מיילים טופלו לפי ההוראות. אפשר לראות אותם ב"הוראות".`;
+          } else if (emailInstructions.length > 0 && mode === "instructions") {
+            // Only shown when this IS the instructions-only button — in the
+            // combined "all" mode the rules message above already covers
+            // "nothing new" for that run, and the old behavior (no message
+            // at all when zero instructions matched) stays for it too.
+            msg = "לא נמצאו מיילים חדשים לפי ההוראות — אין חדש למיין/למחוק. אפשר לראות מה כבר טופל ב\"הוראות\".";
+          }
+        }
       }
       if (msg) setEmailStatusMsg(msg);
     }
     setEmailLoading(false);
+    setEmailSyncMode(null);
   };
 
   // Re-sync just one rule (used by the "🔄 עדכן" button on its detail page)
@@ -1930,7 +1971,7 @@ export default function App() {
             gmailClientId={gmailClientId} setGmailClientId={setGmailClientId} showClientIdInput={showClientIdInput} setShowClientIdInput={setShowClientIdInput} editGmailClientId={editGmailClientId}
             gmailToken={gmailToken} connectGmail={connectGmail} disconnectGmail={disconnectGmail} gmailAuthError={gmailAuthError} setGmailAuthError={setGmailAuthError}
             emailRules={emailRules} saveEmailRules={saveEmailRules} newRule={newRule} setNewRule={setNewRule} showNewRule={showNewRule} setShowNewRule={setShowNewRule}
-            emailLoading={emailLoading} fetchAndSummarize={syncEmail} emailStatusMsg={emailStatusMsg} emailSyncProgress={emailSyncProgress} cancelEmailSync={cancelEmailSync}
+            emailLoading={emailLoading} emailSyncMode={emailSyncMode} onSyncRules={() => syncEmail("rules")} onSyncInstructions={() => syncEmail("instructions")} emailStatusMsg={emailStatusMsg} emailSyncProgress={emailSyncProgress} cancelEmailSync={cancelEmailSync}
             gmailLabels={gmailLabels} labelsLoading={labelsLoading} labelsError={labelsError} fetchGmailLabels={fetchGmailLabels} ensureRuleLabel={ensureRuleLabel}
             archiveErrorMsg={archiveErrorMsg} setArchiveErrorMsg={setArchiveErrorMsg}
             onOpenOverview={openEmailOverview}

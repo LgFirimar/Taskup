@@ -12,7 +12,7 @@ export default function EmailOverlay({
   gmailClientId, setGmailClientId, showClientIdInput, setShowClientIdInput, editGmailClientId,
   gmailToken, connectGmail, disconnectGmail, gmailAuthError, setGmailAuthError,
   emailRules, saveEmailRules, newRule, setNewRule, showNewRule, setShowNewRule,
-  emailLoading, fetchAndSummarize, emailStatusMsg, emailSyncProgress, cancelEmailSync,
+  emailLoading, emailSyncMode, onSyncRules, onSyncInstructions, emailStatusMsg, emailSyncProgress, cancelEmailSync,
   gmailLabels, labelsLoading, labelsError, fetchGmailLabels, ensureRuleLabel,
   archiveErrorMsg, setArchiveErrorMsg,
   onOpenOverview,
@@ -498,10 +498,20 @@ export default function EmailOverlay({
           });
         })()}
 
-        {/* Fetch button */}
-        {gmailToken&&(emailRules.length>0||emailInstructions.length>0)&&(
-          <button onClick={fetchAndSummarize} disabled={emailLoading} style={{width:"100%",background:accent,color:"white",border:"none",borderRadius:14,padding:"13px 0",fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginTop:20,marginBottom:emailLoading&&emailSyncProgress?4:20,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-            {emailLoading?<><div className="spinner" style={{borderTopColor:"white",borderColor:"rgba(255,255,255,0.3)"}}/>טוען מיילים...</>:"🔄 סכמי מיילים עכשיו"}
+        {/* Two separate sync buttons — summarizing rules (AI, costs time per
+            email) and sorting/deleting instructions (instant, no AI) are
+            different-enough operations that running one shouldn't force
+            waiting on the other. Each disables while EITHER is running (only
+            one sync at a time makes sense — they'd otherwise race on shared
+            state), but only the one actually running shows its own spinner. */}
+        {gmailToken&&emailRules.length>0&&(
+          <button onClick={onSyncRules} disabled={emailLoading} style={{width:"100%",background:accent,color:"white",border:"none",borderRadius:14,padding:"13px 0",fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginTop:20,marginBottom:emailLoading&&emailSyncMode==="rules"&&emailSyncProgress?4:(emailInstructions.length>0?10:20),display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+            {emailLoading&&emailSyncMode==="rules"?<><div className="spinner" style={{borderTopColor:"white",borderColor:"rgba(255,255,255,0.3)"}}/>מסכמת מיילים...</>:"🔄 סכמי מיילים עכשיו"}
+          </button>
+        )}
+        {gmailToken&&emailInstructions.length>0&&(
+          <button onClick={onSyncInstructions} disabled={emailLoading} style={{width:"100%",background:"white",color:accent,border:`1.5px solid ${accent}`,borderRadius:14,padding:"13px 0",fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"'Heebo',sans-serif",marginTop:emailRules.length>0?0:20,marginBottom:emailLoading&&emailSyncMode==="instructions"&&emailSyncProgress?4:20,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+            {emailLoading&&emailSyncMode==="instructions"?<><div className="spinner" style={{borderTopColor:accent,borderColor:"rgba(0,0,0,0.1)"}}/>ממיינת לפי הוראות...</>:"📋 מייני לפי הוראות עכשיו"}
           </button>
         )}
 
