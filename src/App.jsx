@@ -1219,16 +1219,31 @@ export default function App() {
         labelId = instruction.labelId || (instruction.labelName ? await ensureInstructionLabel(instruction) : null);
       }
 
+      // Capped per sync, same reasoning as runRuleSync's cap-to-3 — but a
+      // much bigger number, since a sort/delete instruction has no AI cost
+      // per email (just two quick Gmail API calls). This used to be
+      // uncapped on the theory that "cheap enough to just finish the whole
+      // backlog in one go" — but on a genuinely large backlog (hundreds or
+      // thousands of matches), even a cheap per-email cost adds up to
+      // minutes of sequential network round-trips, which syncEmail's outer
+      // loop over emailInstructions has to sit through before it can even
+      // START the next instruction. On a slow/mobile connection that's
+      // easily enough time for the tab to get backgrounded or the ~1hr
+      // Gmail token to expire — so instruction 1 alone could consume an
+      // entire sync run (or several), and every OTHER instruction never got
+      // a turn no matter how many times "סכמי מיילים עכשיו" was pressed.
+      // Capping guarantees every instruction gets touched every sync click,
+      // even if a huge one takes several clicks to fully drain.
+      const capped = freshThreads.slice(0, 25);
       let stoppedEarly = false;
-      for (let j = 0; j < freshThreads.length; j++) {
-        const thread = freshThreads[j];
+      for (let j = 0; j < capped.length; j++) {
+        const thread = capped[j];
         if (emailSyncCancelRef.current) { stoppedEarly = true; break; }
-        // Per-email progress — this loop has no AI cost cap (see comment
-        // above), so on a big backlog it can be the ONLY thing running for a
-        // long stretch. Without this, the progress text stayed frozen on
-        // "בודקת הוראה X" for the entire loop, indistinguishable from being
-        // stuck even when hundreds of emails were being processed correctly.
-        onProgress?.(`ממיינת מייל ${j+1} מתוך ${freshThreads.length}`);
+        // Per-email progress — without this, the progress text stayed
+        // frozen on "בודקת הוראה X" for the entire loop, indistinguishable
+        // from being stuck even when several emails were processed
+        // correctly.
+        onProgress?.(`ממיינת מייל ${j+1} מתוך ${capped.length}`);
         // Need Subject/From/Date for the log entry — a lightweight metadata
         // fetch, not the full message body (no summarization happening here).
         const mRes = await fetchWithTimeout(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date&metadataHeaders=Message-ID`, { headers: { Authorization: `Bearer ${gmailToken}` } });
@@ -1267,21 +1282,23 @@ export default function App() {
         }
         const logEntry = { id: thread.id, messageId, instructionId: instruction.id, subject, sender, date, action: instruction.action, labelName: instruction.labelName || gmailLabels.find(l=>l.id===instruction.labelId)?.name || null };
         newLogEntries.push(logEntry);
-        // Persist THIS ONE processed email immediately — an instruction's
-        // own loop is uncapped (see the comment above), so on a big backlog
-        // it alone can run long enough to get interrupted (tab backgrounded,
+        // Persist THIS ONE processed email immediately — even capped to 25,
+        // a slow mobile connection can still die mid-loop (tab backgrounded,
         // network drop, page reload). Without this, an interruption partway
-        // through even a SINGLE instruction lost everything it had already
-        // sorted/deleted from Taskup's own record (Gmail itself still has it
-        // sorted/trashed — only our log of it was at risk).
+        // through even a single instruction's capped batch lost everything
+        // it had already sorted/deleted from Taskup's own record (Gmail
+        // itself still has it sorted/trashed — only our log of it was at
+        // risk).
         onEntry?.(logEntry);
       }
       // See the matching comment in runRuleSync — only safe to advance the
-      // watermark if we made it through every fresh match without an early
-      // stop (cancel or a token dying mid-loop), or older backlog mail past
-      // the stop point would silently become unreachable by any future
-      // (watermark-restricted) search.
-      fullyDrained = !stoppedEarly;
+      // watermark if every fresh match the search found was actually
+      // attempted this run. The cap above (same as a cancel or a token
+      // dying mid-loop) can leave older backlog mail unattempted — leaving
+      // fullyDrained false in that case means the next sync re-lists the
+      // same remaining backlog and keeps working through it 25 at a time,
+      // instead of silently losing anything past the cap.
+      fullyDrained = freshThreads.length <= capped.length && !stoppedEarly;
     } catch (e) {
       console.error(e);
       failures++;
