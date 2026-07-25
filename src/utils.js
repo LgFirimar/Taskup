@@ -115,19 +115,34 @@ export const urlBase64ToUint8Array = (base64String) => {
 // call is strictly more aggressive than a plain "leave it alone" no-op, so
 // repeated calls (as React re-runs the effect after each state update)
 // converge instead of looping forever. Returns { pruned, giveUp } — giveUp
-// is true only once nothing is left to safely shrink (list already at 1
-// item), so the caller can stop retrying and surface a real error instead
-// of spinning.
+// is true only once nothing is left to safely shrink (every entry already
+// stripped of its text), so the caller can stop retrying and surface a
+// real error instead of spinning.
+//
+// Critical invariant: this NEVER removes an entry from the list, only ever
+// empties its `results` text. An earlier version dropped the oldest half of
+// the list outright as a last resort once nothing was left to strip — but
+// syncEmail's existingKeys (used to skip mail already synced, in any
+// status) is built from the ids of whatever is currently in this list. Drop
+// an entry and its id disappears from existingKeys too, so the next sync
+// can no longer tell it was ever processed: the email gets silently
+// re-fetched and re-summarized as if brand new, forever, on a schedule that
+// tracks quota pressure rather than anything about the email itself — which
+// is exactly what made already-sorted mail keep reappearing as "new" in an
+// unpredictable pattern. Losing an old, unread summary's text under quota
+// pressure is an acceptable trade; losing the record that it was already
+// handled is not.
 export const pruneEmailSummariesForQuota = (list) => {
   const hasText = (s) => s.results && Object.keys(s.results).length > 0;
-  const stripStatus = (status) => list.map(s => (s.status === status && hasText(s)) ? { ...s, results: {}, prunedForSpace: true } : s);
-  if (list.some(s => s.status === "done" && hasText(s))) return { pruned: stripStatus("done"), giveUp: false };
-  if (list.some(s => s.status === "pending" && hasText(s))) return { pruned: stripStatus("pending"), giveUp: false };
-  if (list.length <= 1) return { pruned: list, giveUp: true };
-  // Last resort: everything left is "new" (still full text, still needed)
-  // and there's more than one — drop the oldest half outright rather than
-  // get stuck unable to save anything at all.
-  return { pruned: list.slice(Math.floor(list.length / 2)), giveUp: false };
+  const strip = (predicate) => list.map(s => (predicate(s) && hasText(s)) ? { ...s, results: {}, prunedForSpace: true } : s);
+  if (list.some(s => s.status === "done" && hasText(s))) return { pruned: strip(s => s.status === "done"), giveUp: false };
+  if (list.some(s => s.status === "pending" && hasText(s))) return { pruned: strip(s => s.status === "pending"), giveUp: false };
+  // Last resort: strip whatever text is left regardless of status
+  // (untouched "new" entries) — but the entries themselves are kept.
+  if (list.some(hasText)) return { pruned: strip(() => true), giveUp: false };
+  // Nothing left anywhere to shrink — every entry is already a bare
+  // id/ruleId record with no text to reclaim.
+  return { pruned: list, giveUp: true };
 };
 
 // Shared between EmailOverlay, EmailSummariesOverview and EmailRuleDetail so
