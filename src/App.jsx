@@ -193,18 +193,18 @@ export default function App() {
     // Deferred via setTimeout (same pattern as the labels-fetch effect below)
     // so the setState calls happen outside the effect's synchronous body.
     const t = setTimeout(() => {
-      localStorage.setItem("email_watermark_migration_v1", "1");
+      try { localStorage.setItem("email_watermark_migration_v1", "1"); } catch (e) { console.error("email_watermark_migration_v1 persist failed", e); }
       const stripWatermark = (list) => list.map(r => { const copy = { ...r }; delete copy.lastSyncedAt; return copy; });
       setEmailRules(prev => {
         if (!prev.some(r => r.lastSyncedAt)) return prev;
         const next = stripWatermark(prev);
-        localStorage.setItem("email_rules", JSON.stringify(next));
+        persistOrWarn("email_rules", next, "החוק");
         return next;
       });
       setEmailInstructions(prev => {
         if (!prev.some(r => r.lastSyncedAt)) return prev;
         const next = stripWatermark(prev);
-        localStorage.setItem("email_instructions", JSON.stringify(next));
+        persistOrWarn("email_instructions", next, "ההוראה");
         return next;
       });
     }, 0);
@@ -335,7 +335,7 @@ export default function App() {
   },[emailSummaries]);
 
   useEffect(()=>{
-    localStorage.setItem("email_instructions",JSON.stringify(emailInstructions));
+    persistOrWarn("email_instructions", emailInstructions, "ההוראה");
   },[emailInstructions]);
 
   useEffect(()=>{
@@ -577,8 +577,38 @@ export default function App() {
   };
 
   // ── Email functions ────────────────────────────────────────────────────────
-  const saveEmailRules = (rules) => { setEmailRules(rules); localStorage.setItem("email_rules", JSON.stringify(rules)); };
-  const saveEmailInstructions = (list) => { setEmailInstructions(list); localStorage.setItem("email_instructions", JSON.stringify(list)); };
+  // localStorage's quota is shared across the WHOLE origin, not per-key —
+  // emailSummaries (see pruneEmailSummariesForQuota) is the collection that
+  // realistically grows large enough to hit it, but once the origin is near
+  // that ceiling, ANY other write here — even a tiny one, like adding a
+  // single rule/instruction — can also throw QuotaExceededError. Every
+  // email_rules/email_instructions write used to do a bare
+  // localStorage.setItem with no try/catch at all (unlike email_summaries
+  // and email_instruction_log, which already had at least a log-only
+  // catch) — and since there's no error boundary anywhere in the app, an
+  // uncaught throw here (whether in a click handler or, worse, inside the
+  // useEffect below) blanked the ENTIRE page with no way to recover short
+  // of force-closing the app. That's exactly what was reported: creating an
+  // instruction crashed to a blank screen on every attempt, and the
+  // instruction was never actually saved (the throw happens mid-write, so
+  // the OLD value stays in localStorage). Neither collection has heavy
+  // content worth automatically pruning the way email_summaries does, so
+  // recovery here is just "don't crash — tell her why the save didn't go
+  // through" rather than reclaiming space on its own.
+  const persistOrWarn = (key, value, label) => {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      return true;
+    } catch (e) {
+      console.error(`${key} persist failed`, e);
+      if (e?.name === "QuotaExceededError" || e?.code === 22) {
+        setEmailStatusMsg(`האחסון במכשיר מלא — ${label} לא נשמר/ה. נסי לגבות ל-Google Drive ואז לפנות מקום באחסון המכשיר (או למחוק חלק מהמיילים המסוכמים הישנים), ואז לנסות שוב.`);
+      }
+      return false;
+    }
+  };
+  const saveEmailRules = (rules) => { setEmailRules(rules); persistOrWarn("email_rules", rules, "החוק"); };
+  const saveEmailInstructions = (list) => { setEmailInstructions(list); persistOrWarn("email_instructions", list, "ההוראה"); };
 
   // Persists a freshly (re)issued token + when it expires, from either an
   // interactive connectGmail() or a silent background refresh.
@@ -784,7 +814,7 @@ export default function App() {
     if (rule.archiveLabelId) return rule.archiveLabelId;
     if (!rule.archiveLabelName || !rule.archiveLabelName.trim()) return null;
     const id = await resolveOrCreateLabel(rule.archiveLabelName.trim());
-    if (id) setEmailRules(prev => { const next = prev.map(r => r.id === rule.id ? { ...r, archiveLabelId: id } : r); localStorage.setItem("email_rules", JSON.stringify(next)); return next; });
+    if (id) setEmailRules(prev => { const next = prev.map(r => r.id === rule.id ? { ...r, archiveLabelId: id } : r); persistOrWarn("email_rules", next, "החוק"); return next; });
     return id;
   };
 
@@ -793,7 +823,7 @@ export default function App() {
     if (instruction.labelId) return instruction.labelId;
     if (!instruction.labelName || !instruction.labelName.trim()) return null;
     const id = await resolveOrCreateLabel(instruction.labelName.trim());
-    if (id) setEmailInstructions(prev => { const next = prev.map(r => r.id === instruction.id ? { ...r, labelId: id } : r); localStorage.setItem("email_instructions", JSON.stringify(next)); return next; });
+    if (id) setEmailInstructions(prev => { const next = prev.map(r => r.id === instruction.id ? { ...r, labelId: id } : r); persistOrWarn("email_instructions", next, "ההוראה"); return next; });
     return id;
   };
 
@@ -816,8 +846,8 @@ export default function App() {
       if (res.status === 403) { setArchiveErrorMsg("אין הרשאה לשנות תיקיות ב-Gmail — התנתקי והתחברי מחדש כדי לאשר הרשאת עריכה (לא רק קריאה)."); return false; }
       if (!res.ok) { setArchiveErrorMsg("שינוי השם נכשל — נסי שוב."); return false; }
       setGmailLabels(prev => prev.map(l => l.id === labelId ? { ...l, name: trimmed } : l).sort((a,b) => a.name.localeCompare(b.name, "he")));
-      setEmailRules(prev => { const next = prev.map(r => r.archiveLabelId === labelId ? { ...r, archiveLabelName: trimmed } : r); localStorage.setItem("email_rules", JSON.stringify(next)); return next; });
-      setEmailInstructions(prev => { const next = prev.map(r => r.labelId === labelId ? { ...r, labelName: trimmed } : r); localStorage.setItem("email_instructions", JSON.stringify(next)); return next; });
+      setEmailRules(prev => { const next = prev.map(r => r.archiveLabelId === labelId ? { ...r, archiveLabelName: trimmed } : r); persistOrWarn("email_rules", next, "החוק"); return next; });
+      setEmailInstructions(prev => { const next = prev.map(r => r.labelId === labelId ? { ...r, labelName: trimmed } : r); persistOrWarn("email_instructions", next, "ההוראה"); return next; });
       return true;
     } catch (e) {
       console.error("renameGmailLabel failed", e);
