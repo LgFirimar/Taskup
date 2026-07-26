@@ -1270,6 +1270,27 @@ export default function App() {
       // Capping guarantees every instruction gets touched every sync click,
       // even if a huge one takes several clicks to fully drain.
       const capped = freshThreads.slice(0, 500);
+      // When an instruction has nothing fresh to do, the loop below never
+      // runs at all — so with nothing shown here, the outer syncEmail loop
+      // moves straight on to the NEXT instruction's "בודקת הוראה" message on
+      // the very next tick, with no visible in-between state. On a fast
+      // connection (or a small/empty match set, which is the common case
+      // for an instruction that already fully synced its backlog) that
+      // transition can happen in well under a rendered frame — looking
+      // exactly like this instruction was skipped rather than checked and
+      // found to have nothing new. Reported by the user as instructions
+      // appearing to alternate "מבצע / מדלג" (executes / skips) while
+      // watching the sync — every instruction IS still checked and looped
+      // over every single sync (see the unconditional for-loop over
+      // instructionsInOrder in syncEmail, keyed by instruction.id, not by
+      // position), this only fixes the MISLEADING appearance of some being
+      // silently skipped. A short guaranteed-visible pause here (skippable
+      // via cancel, same as everywhere else) makes the "checked, nothing
+      // new" state actually perceivable instead of invisible.
+      if (capped.length === 0) {
+        onProgress?.("אין מיילים חדשים תואמים — נבדק ואין מה למיין");
+        if (!emailSyncCancelRef.current) await new Promise(r => setTimeout(r, 350));
+      }
       let stoppedEarly = false;
       for (let j = 0; j < capped.length; j++) {
         const thread = capped[j];
