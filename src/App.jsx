@@ -591,19 +591,60 @@ export default function App() {
   // of force-closing the app. That's exactly what was reported: creating an
   // instruction crashed to a blank screen on every attempt, and the
   // instruction was never actually saved (the throw happens mid-write, so
-  // the OLD value stays in localStorage). Neither collection has heavy
-  // content worth automatically pruning the way email_summaries does, so
-  // recovery here is just "don't crash — tell her why the save didn't go
-  // through" rather than reclaiming space on its own.
+  // the OLD value stays in localStorage). Neither email_rules nor
+  // email_instructions has heavy content of its own worth pruning — but
+  // when ONE of them hits the shared origin-wide ceiling, there's usually
+  // real space reclaimable elsewhere (email_summaries' AI text,
+  // email_instruction_log's unbounded history) that just never gets a
+  // chance to free itself, because email_summaries only prunes itself when
+  // ITS OWN write fails (see the effect above) — not when a totally
+  // unrelated rule/instruction save is what hit the wall. Without reaching
+  // over here too, "no room" became a PERMANENT dead end for saving any new
+  // rule/instruction (exactly what was reported after the crash fix:
+  // no more blank page, but new instructions still silently failed to
+  // save) even on a device with plenty of reclaimable space sitting in
+  // those other two collections. So on quota failure this now tries, in
+  // order: (1) strip old AI summary text the same safe way the
+  // email_summaries effect does, (2) trim email_instruction_log down to
+  // its most recent 300 entries (it has no size cap of its own at all) —
+  // and only after BOTH of those fail to free enough room does it give up
+  // and show the "storage full" message.
   const persistOrWarn = (key, value, label) => {
     try {
       localStorage.setItem(key, JSON.stringify(value));
       return true;
     } catch (e) {
       console.error(`${key} persist failed`, e);
-      if (e?.name === "QuotaExceededError" || e?.code === 22) {
-        setEmailStatusMsg(`האחסון במכשיר מלא — ${label} לא נשמר/ה. נסי לגבות ל-Google Drive ואז לפנות מקום באחסון המכשיר (או למחוק חלק מהמיילים המסוכמים הישנים), ואז לנסות שוב.`);
+      if (e?.name !== "QuotaExceededError" && e?.code !== 22) return false;
+
+      console.warn(`${key} persist failed on quota — attempting automatic cleanup before giving up`);
+      let freed = false;
+      try {
+        const { pruned, giveUp } = pruneEmailSummariesForQuota(emailSummaries);
+        if (!giveUp) {
+          localStorage.setItem("email_summaries", JSON.stringify(pruned));
+          setEmailSummaries(pruned);
+          freed = true;
+        }
+      } catch { /* summaries write itself still over quota — fall through */ }
+      if (!freed && emailInstructionLog.length > 300) {
+        try {
+          const trimmed = emailInstructionLog.slice(0, 300);
+          localStorage.setItem("email_instruction_log", JSON.stringify(trimmed));
+          setEmailInstructionLog(trimmed);
+          freed = true;
+        } catch { /* still over quota — nothing more to try */ }
       }
+      if (freed) {
+        try {
+          localStorage.setItem(key, JSON.stringify(value));
+          setEmailStatusMsg(`האחסון במכשיר היה כמעט מלא — פיניתי אוטומטית מקום (קיצור סיכומים ישנים/יומן הוראות) כדי ש${label} תישמר בהצלחה. עדיין מומלץ לגבות ל-Google Drive בהזדמנות.`);
+          return true;
+        } catch (e2) {
+          console.error(`${key} persist still failed after automatic cleanup`, e2);
+        }
+      }
+      setEmailStatusMsg(`האחסון במכשיר מלא — ${label} לא נשמר/ה. נסי לגבות ל-Google Drive ואז לפנות מקום באחסון המכשיר (או למחוק חלק מהמיילים המסוכמים הישנים), ואז לנסות שוב.`);
       return false;
     }
   };
