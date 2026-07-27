@@ -30,6 +30,39 @@ import {
   pruneEmailSummariesForQuota,
 } from "./utils";
 
+// True when the app is running as an installed/home-screen PWA (standalone
+// display mode) rather than a normal browser tab. Needed because the
+// popup-based Google sign-in below silently breaks in exactly this context
+// — see the long comment on connectGmail for why.
+const isStandalonePwa = () => {
+  try {
+    return window.navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
+  } catch { return false; }
+};
+
+// Builds a full-page-redirect Google OAuth URL (the plain
+// accounts.google.com endpoint, not the Google Identity Services popup
+// helper) for the implicit token grant — same grant type initTokenClient
+// uses under the hood, just without a popup/opener involved. `purpose`
+// ("gmail" or "drive") is embedded in `state` so the redirect-return handler
+// below knows which token/error setter to call once Google sends the
+// browser back here.
+const buildGoogleOAuthRedirectUrl = (clientId, scope, purpose) => {
+  const redirectUri = window.location.origin + window.location.pathname;
+  const state = `${purpose}:${Math.random().toString(36).slice(2)}`;
+  sessionStorage.setItem("google_oauth_redirect_state", state);
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: "token",
+    scope,
+    include_granted_scopes: "true",
+    prompt: "consent",
+    state,
+  });
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+};
+
 export default function App() {
   const [showSplash,setShowSplash] = useState(()=>!sessionStorage.getItem("splashDone"));
 
@@ -670,6 +703,25 @@ export default function App() {
     if (!clientId) { setShowClientIdInput(true); return; }
     setGmailAuthError("");
 
+    // The popup flow below (Google Identity Services' initTokenClient) needs
+    // window.opener to hand the token back from the popup to this page once
+    // sign-in finishes. On iOS, when the app is installed to the home
+    // screen and running in standalone display mode, that opener link is
+    // broken — a known WebKit bug (the popup gets opened in a detached
+    // Safari-hosted view with no working reference back to the page that
+    // opened it). The popup itself works fine and she can complete sign-in,
+    // but the token can never make it back here — the button just silently
+    // reverts to "not connected" with no error, since nothing ever actually
+    // throws. Reported directly: reaches Google's account picker, gets
+    // stuck there, works fine from regular Safari but not from the
+    // home-screen icon. A full top-level redirect sidesteps this entirely —
+    // the SAME window navigates away to Google and back, so there's no
+    // separate popup/opener relationship to lose.
+    if (isStandalonePwa()) {
+      window.location.href = buildGoogleOAuthRedirectUrl(clientId, "https://www.googleapis.com/auth/gmail.modify", "gmail");
+      return;
+    }
+
     // Load Google Identity Services script if not already loaded
     const initGIS = () => {
       try{
@@ -729,6 +781,50 @@ export default function App() {
       document.head.appendChild(script);
     }
   };
+
+  // Runs once on load to catch Google sending the browser back here after
+  // the top-level-redirect flow above (connectGmail/connectDrive's
+  // isStandalonePwa branch) — the token/error comes back as a URL fragment
+  // (#access_token=...&state=...), not a popup callback, so there's nothing
+  // to catch this except reading location.hash on mount. The URL is cleaned
+  // immediately either way so a page refresh doesn't replay a stale token.
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash || (!hash.includes("access_token") && !hash.includes("error="))) return;
+    const params = new URLSearchParams(hash.slice(1));
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    const returnedState = params.get("state") || "";
+    const expectedState = sessionStorage.getItem("google_oauth_redirect_state") || "";
+    sessionStorage.removeItem("google_oauth_redirect_state");
+    // No/mismatched state — not a redirect we started (or a stale/replayed
+    // one), ignore quietly rather than showing a confusing error.
+    if (!returnedState || returnedState !== expectedState) return;
+    const purpose = returnedState.split(":")[0];
+    const setAuthError = purpose === "drive" ? setDriveAuthError : setGmailAuthError;
+    if (params.get("error")) {
+      setAuthError(params.get("error") === "access_denied" ? "ההתחברות בוטלה." : `החיבור נכשל: ${params.get("error")}`);
+      return;
+    }
+    const accessToken = params.get("access_token");
+    if (!accessToken) return;
+    const scope = params.get("scope") || "";
+    if (purpose === "drive") {
+      if (scope && !scope.includes("drive.file")) {
+        setDriveAuthError("ההתחברות הצליחה אבל לא אישרת את ההרשאה לגישה ל-Drive. נסי להתחבר שוב ווודאי שכל ההרשאות מסומנות.");
+        return;
+      }
+      localStorage.setItem("drive_token", accessToken);
+      setDriveToken(accessToken);
+      setDriveAuthError("");
+    } else {
+      if (scope && !scope.includes("gmail.modify")) {
+        setGmailAuthError("ההתחברות הצליחה אבל לא אישרת את ההרשאה לקריאה ועריכה של Gmail (יכול להיות שהצ'קבוקס של \"קריאת המייל שלך וניהולו\" בוטל בזמן האישור). נסי להתחבר שוב ווודאי שכל ההרשאות מסומנות.");
+        return;
+      }
+      applyGmailToken({ access_token: accessToken, expires_in: params.get("expires_in"), scope });
+      setGmailAuthError("");
+    }
+  }, []);
 
   // Best-effort background token refresh: Google's implicit OAuth flow only
   // ever hands out short-lived (~1h) tokens with no refresh token, so a long
@@ -1596,6 +1692,13 @@ export default function App() {
     const clientId = gmailClientId.trim();
     if (!clientId) { setDriveAuthError("קודם צריך להגדיר Google Client ID (באותה הגדרה שמשמשת את חיבור ה-Gmail)."); setShowClientIdInput(true); return; }
     setDriveAuthError("");
+
+    // Same broken-opener issue as connectGmail above when running as an
+    // installed home-screen PWA — see that comment for the full reasoning.
+    if (isStandalonePwa()) {
+      window.location.href = buildGoogleOAuthRedirectUrl(clientId, "https://www.googleapis.com/auth/drive.file", "drive");
+      return;
+    }
 
     const initGIS = () => {
       try{
