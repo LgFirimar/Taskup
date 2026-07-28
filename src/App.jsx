@@ -48,7 +48,16 @@ const isStandalonePwa = () => {
 // below knows which token/error setter to call once Google sends the
 // browser back here.
 const buildGoogleOAuthRedirectUrl = (clientId, scope, purpose) => {
-  const redirectUri = window.location.origin + window.location.pathname;
+  // Bare origin, no trailing pathname — kept as simple/predictable as
+  // possible on purpose. Google requires a byte-exact match against
+  // whatever's registered in "Authorized redirect URIs", and a
+  // manually-typed console entry is an easy place for an invisible stray
+  // character (trailing space, smart-quote-style paste artifact) to sneak
+  // in without showing up in a screenshot. origin+pathname("/") forces
+  // matching against a URI that ends in a slash, typed by hand — origin
+  // alone avoids that whole class of trailing-character mismatch and is
+  // the simpler, more standard form to register.
+  const redirectUri = window.location.origin;
   const state = `${purpose}:${Math.random().toString(36).slice(2)}`;
   sessionStorage.setItem("google_oauth_redirect_state", state);
   const params = new URLSearchParams({
