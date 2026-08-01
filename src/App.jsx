@@ -123,6 +123,16 @@ export default function App() {
   const [completingId,setCompletingId] = useState(null);
   const [lastDeleted,setLastDeleted] = useState(null); // {type,item,tabId,subtabId} — for the undo toast
   const undoTimeoutRef = useRef(null);
+  // App-wide banner for a storage-quota problem on the MAIN save (tasks,
+  // reminders, lists, projects — the taskup_v1 blob). emailStatusMsg (see
+  // persistOrWarn below) only renders inside the email overlay, so a quota
+  // failure while she's anywhere else in the app — e.g. adding a shopping-
+  // list item — had literally nowhere to surface: the save silently failed,
+  // the item stayed visible in memory (looking saved) until the next
+  // reload, and then it was just gone with no error ever shown. This is
+  // rendered at the app root (see the JSX near UndoToast) so it's visible
+  // no matter which screen/overlay is open when the failure happens.
+  const [storageWarning,setStorageWarning] = useState("");
   const [showDoneTasks,setShowDoneTasks] = useState(false);
   const [showDoneReminders,setShowDoneReminders] = useState(false);
   const [bigCelebrateId,setBigCelebrateId] = useState(null);
@@ -331,15 +341,22 @@ export default function App() {
   const profileMenuRef = useRef(null);
   const settingsMenuRef = useRef(null);
 
+  // This is THE most important write in the app — every task, reminder,
+  // list (including shopping lists), and project lives in this one blob.
+  // It used to be a bare try/catch that only console.error'd on quota
+  // failure — meaning an item added right when the origin's shared
+  // localStorage quota was already full (easily reached by the email
+  // features' data — see persistOrWarn below) would show up fine in the UI
+  // (state update always succeeds, it's just the write to disk that
+  // throws), then silently vanish on the next reload with zero indication
+  // anything went wrong. Reported directly: shopping-list items added now
+  // gone when reopening later. persistOrWarn already has proven auto-
+  // recovery for exactly this (prune old email summary text / trim the
+  // instruction log to free space, then retry) — reusing it here instead
+  // of a bare try/catch actually saves the data instead of just failing
+  // more visibly.
   useEffect(()=>{
-    try {
-      localStorage.setItem(STORAGE_KEY,JSON.stringify({profiles,activeProfile:activeProfileId}));
-    } catch (e) {
-      // Lower risk than email_summaries (no large AI text here), but a
-      // silent failure here would be worse — tasks/reminders — so at least
-      // surface it instead of losing changes with no visible sign.
-      console.error("main storage persist failed", e);
-    }
+    persistOrWarn(STORAGE_KEY, {profiles,activeProfile:activeProfileId}, "השינוי האחרון");
   },[profiles,activeProfileId]);
 
   // This is the one collection realistically at risk of exceeding
@@ -680,13 +697,20 @@ export default function App() {
       if (freed) {
         try {
           localStorage.setItem(key, JSON.stringify(value));
-          setEmailStatusMsg(`האחסון במכשיר היה כמעט מלא — פיניתי אוטומטית מקום (קיצור סיכומים ישנים/יומן הוראות) כדי ש${label} תישמר בהצלחה. עדיין מומלץ לגבות ל-Google Drive בהזדמנות.`);
+          const recoveredMsg = `האחסון במכשיר היה כמעט מלא — פיניתי אוטומטית מקום (קיצור סיכומים ישנים/יומן הוראות) כדי ש${label} תישמר בהצלחה. עדיין מומלץ לגבות ל-Google Drive בהזדמנות.`;
+          setEmailStatusMsg(recoveredMsg);
+          // Also surface app-wide (see storageWarning above) — a save
+          // outside the email overlay (e.g. taskup_v1: tasks/lists/
+          // reminders) has nowhere else visible to show this.
+          setStorageWarning(recoveredMsg);
           return true;
         } catch (e2) {
           console.error(`${key} persist still failed after automatic cleanup`, e2);
         }
       }
-      setEmailStatusMsg(`האחסון במכשיר מלא — ${label} לא נשמר/ה. נסי לגבות ל-Google Drive ואז לפנות מקום באחסון המכשיר (או למחוק חלק מהמיילים המסוכמים הישנים), ואז לנסות שוב.`);
+      const failMsg = `האחסון במכשיר מלא — ${label} לא נשמר/ה. נסי לגבות ל-Google Drive ואז לפנות מקום באחסון המכשיר (או למחוק חלק מהמיילים המסוכמים הישנים), ואז לנסות שוב.`;
+      setEmailStatusMsg(failMsg);
+      setStorageWarning(failMsg);
       return false;
     }
   };
@@ -2138,6 +2162,17 @@ export default function App() {
 
         {/* Undo delete toast */}
         <UndoToast lastDeleted={lastDeleted} undoDeleteItem={undoDeleteItem}/>
+
+        {/* Storage-quota warning — app-wide, not tied to any one overlay
+            (see storageWarning above for why this exists). Stays up until
+            dismissed, unlike UndoToast, since it can mean a save just
+            failed and she needs to actually act on it. */}
+        {storageWarning&&(
+          <div role="alert" style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"#7a2b2b",color:"white",borderRadius:16,padding:"12px 16px",display:"flex",alignItems:"flex-start",gap:10,zIndex:400,boxShadow:"0 6px 24px rgba(0,0,0,0.28)",fontFamily:"'Heebo',sans-serif",fontSize:13,direction:"rtl",maxWidth:"calc(100vw - 32px)",width:380}}>
+            <span style={{flex:1,lineHeight:1.5}}>⚠️ {storageWarning}</span>
+            <button onClick={()=>setStorageWarning("")} aria-label="סגור התראה" style={{background:"none",border:"none",color:"white",cursor:"pointer",fontSize:16,fontWeight:700,padding:0,lineHeight:1}}>✕</button>
+          </div>
+        )}
 
         {/* Quick capture */}
         {showQuickCapture&&(
