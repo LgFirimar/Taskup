@@ -668,9 +668,16 @@ export default function App() {
   // its most recent 300 entries (it has no size cap of its own at all) —
   // and only after BOTH of those fail to free enough room does it give up
   // and show the "storage full" message.
-  const persistOrWarn = (key, value, label) => {
+  // `raw` — most collections here are stored JSON-encoded, but a couple of
+  // keys (gmail_token, gmail_token_expires_at) are stored as bare strings
+  // and read back with plain getItem (no JSON.parse) elsewhere in the file
+  // — JSON-encoding those would silently corrupt them (wrapping the token
+  // in quotes) for every other read site. raw:true skips the
+  // JSON.stringify for exactly those cases.
+  const persistOrWarn = (key, value, label, raw=false) => {
+    const encode = (v) => raw ? v : JSON.stringify(v);
     try {
-      localStorage.setItem(key, JSON.stringify(value));
+      localStorage.setItem(key, encode(value));
       return true;
     } catch (e) {
       console.error(`${key} persist failed`, e);
@@ -696,7 +703,7 @@ export default function App() {
       }
       if (freed) {
         try {
-          localStorage.setItem(key, JSON.stringify(value));
+          localStorage.setItem(key, encode(value));
           const recoveredMsg = `האחסון במכשיר היה כמעט מלא — פיניתי אוטומטית מקום (קיצור סיכומים ישנים/יומן הוראות) כדי ש${label} תישמר בהצלחה. עדיין מומלץ לגבות ל-Google Drive בהזדמנות.`;
           setEmailStatusMsg(recoveredMsg);
           // Also surface app-wide (see storageWarning above) — a save
@@ -720,14 +727,24 @@ export default function App() {
   // Persists a freshly (re)issued token + when it expires, from either an
   // interactive connectGmail() or a silent background refresh.
   const applyGmailToken = (response) => {
-    localStorage.setItem("gmail_token", response.access_token);
+    // Both writes here used to be bare localStorage.setItem calls with no
+    // try/catch at all. Under the SAME shared-origin quota pressure this
+    // app has hit repeatedly elsewhere, that throws QuotaExceededError
+    // uncaught — and since this now also runs from the redirect-return
+    // effect below (the standalone-PWA OAuth fix), an uncaught throw there
+    // is inside React's effect-commit phase with no error boundary
+    // anywhere in the app, which blanks the ENTIRE page. Reported exactly:
+    // white screen right after confirming Google sign-in. persistOrWarn
+    // gives this the same auto-recovery (free space, retry) every other
+    // write in the app already has, instead of crashing.
+    persistOrWarn("gmail_token", response.access_token, "החיבור ל-Gmail", /*raw*/true);
     setGmailToken(response.access_token);
     // expires_in is seconds from now (Google's implicit-flow tokens are
     // typically ~3599s / just under an hour) — no refresh token is ever
     // issued in this flow, so this is purely for the silent-refresh timer
     // below to know when to try minting a new one.
     const expiresAt = Date.now() + (Number(response.expires_in) || 3500) * 1000;
-    localStorage.setItem("gmail_token_expires_at", String(expiresAt));
+    persistOrWarn("gmail_token_expires_at", String(expiresAt), "החיבור ל-Gmail", /*raw*/true);
     setGmailTokenExpiresAt(expiresAt);
   };
 
@@ -846,7 +863,7 @@ export default function App() {
         setDriveAuthError("ההתחברות הצליחה אבל לא אישרת את ההרשאה לגישה ל-Drive. נסי להתחבר שוב ווודאי שכל ההרשאות מסומנות.");
         return;
       }
-      localStorage.setItem("drive_token", accessToken);
+      persistOrWarn("drive_token", accessToken, "החיבור ל-Drive", /*raw*/true);
       setDriveToken(accessToken);
       setDriveAuthError("");
     } else {
@@ -1744,7 +1761,7 @@ export default function App() {
                 setDriveAuthError("ההתחברות הצליחה אבל לא אישרת את ההרשאה לגישה ל-Drive. נסי להתחבר שוב ווודאי שכל ההרשאות מסומנות.");
                 return;
               }
-              localStorage.setItem("drive_token", response.access_token);
+              persistOrWarn("drive_token", response.access_token, "החיבור ל-Drive", /*raw*/true);
               setDriveToken(response.access_token);
               setDriveAuthError("");
             } else {
