@@ -42,7 +42,7 @@ export default function DailyScheduleOverlay({
       const res = await fetch(`${WORKER_URL}/schedule`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tasks: lines, dayStart: settings.dayStart, dayEnd: settings.dayEnd }),
+        body: JSON.stringify({ tasks: lines, dayStart: settings.dayStart, dayEnd: settings.dayEnd, homeAddress: settings.homeAddress || "" }),
       });
       const data = await res.json();
       if (!res.ok || !Array.isArray(data.items)) throw new Error(data.error || "שגיאה");
@@ -115,18 +115,27 @@ export default function DailyScheduleOverlay({
         </div>
       </div>
 
-      {/* Day-range settings */}
+      {/* Day-range + home address settings */}
       {showSettings && (
-        <div style={{ padding: "12px 20px", borderBottom: "1px solid #ebebea", display: "flex", alignItems: "center", gap: 14, background: "#fafaf9", flexShrink: 0 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#4a4a4a" }}>
-            מ-
-            <input type="time" className="plain-input" style={{ fontSize: 14, padding: "6px 8px", width: 110 }} value={settings.dayStart}
-              onChange={e => saveSettings({ ...settings, dayStart: e.target.value })} />
-          </label>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#4a4a4a" }}>
-            עד
-            <input type="time" className="plain-input" style={{ fontSize: 14, padding: "6px 8px", width: 110 }} value={settings.dayEnd}
-              onChange={e => saveSettings({ ...settings, dayEnd: e.target.value })} />
+        <div style={{ padding: "12px 20px", borderBottom: "1px solid #ebebea", display: "flex", flexDirection: "column", gap: 10, background: "#fafaf9", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#4a4a4a" }}>
+              מ-
+              <input type="time" className="plain-input" style={{ fontSize: 14, padding: "6px 8px", width: 110 }} value={settings.dayStart}
+                onChange={e => saveSettings({ ...settings, dayStart: e.target.value })} />
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#4a4a4a" }}>
+              עד
+              <input type="time" className="plain-input" style={{ fontSize: 14, padding: "6px 8px", width: 110 }} value={settings.dayEnd}
+                onChange={e => saveSettings({ ...settings, dayEnd: e.target.value })} />
+            </label>
+          </div>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "#4a4a4a" }}>
+            🏠 כתובת הבית (לחישוב זמני נסיעה)
+            <input className="plain-input" style={{ fontSize: 13, padding: "6px 10px" }}
+              placeholder="רחוב ומספר, עיר"
+              value={settings.homeAddress || ""}
+              onChange={e => saveSettings({ ...settings, homeAddress: e.target.value })} />
           </label>
         </div>
       )}
@@ -195,7 +204,7 @@ export default function DailyScheduleOverlay({
                     {item.isTravel && <span style={{ fontSize: 10 }}>🚗</span>}
                     <span style={{ fontSize: 15, color: "#1a1a1a", lineHeight: 1.5 }}>{item.text}</span>
                   </div>
-                  <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>{item.durationMin} דק׳ · מסיים {minToHHMM(item.end)}</div>
+                  <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>{item.durationMin} דק׳ · מסיים {minToHHMM(item.end)}{item.travelNote ? ` · ⚠️ ${item.travelNote}` : ""}</div>
                 </div>
                 <button onClick={() => deleteItem(item.id)} style={{ background: "none", border: "none", color: "#ccc", fontSize: 16, cursor: "pointer", padding: "2px 4px", lineHeight: 1 }} aria-label="מחק">✕</button>
               </div>

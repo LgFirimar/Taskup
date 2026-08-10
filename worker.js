@@ -360,35 +360,76 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/schedule") {
-        const { tasks, dayStart, dayEnd } = await request.json();
+        const { tasks, dayStart, dayEnd, homeAddress } = await request.json();
         if (!Array.isArray(tasks) || tasks.length === 0) {
           return new Response(JSON.stringify({ error: "Missing tasks" }), { status: 400, headers: { ...headers, "content-type": "application/json" } });
         }
-        const taskList = tasks.slice(0, 30).map((t, i) => `${i + 1}. ${String(t).slice(0, 200)}`).join("\n");
-        const text = await callClaude(env, {
-          maxTokens: 900,
-          prompt: `אתה עוזר לתכנון יום. שעות פעילות: ${dayStart || "08:00"} עד ${dayEnd || "21:00"}.
 
-רשימת המשימות להיום:
+        // Step 1 — Claude extracts durations, fixed times, and destination addresses
+        const taskList = tasks.slice(0, 30).map((t, i) => `${i + 1}. ${String(t).slice(0, 300)}`).join("\n");
+        const homeHint = homeAddress ? `כתובת הבית (מוצא לנסיעות): ${homeAddress}` : "";
+        const aiText = await callClaude(env, {
+          maxTokens: 1200,
+          prompt: `אתה עוזר לתכנון יום. שעות פעילות: ${dayStart || "08:00"} עד ${dayEnd || "21:00"}.
+${homeHint}
+
+משימות:
 ${taskList}
 
 לכל משימה הערך:
-- durationMin: כמה דקות תיקח (15 עד 180)
-- fixedTime: שעה קבועה HH:MM אם המשימה חייבת להיות בזמן מסוים (כמו "איסוף ילדים ב-15:30"), אחרת null
-- travelMin: דקות נסיעה אם המשימה מחוץ לבית, אחרת 0
+- text: שם המשימה (קצר, ללא כתובות)
+- durationMin: משך בדקות (15–180)
+- fixedTime: שעה קבועה HH:MM אם נדרש, אחרת null
+- destinationAddress: כתובת היעד אם יש נסיעה לשם (מלאה: רחוב + עיר), אחרת null
 
-החזר JSON בלבד, מערך בדיוק בפורמט הזה (ללא טקסט נוסף):
-[{"text":"שם המשימה","durationMin":30,"fixedTime":null,"travelMin":0}]`,
+החזר JSON בלבד:
+[{"text":"שם","durationMin":30,"fixedTime":null,"destinationAddress":null}]`,
         });
+
         let items;
         try {
-          const raw = text.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
+          const raw = aiText.trim().replace(/^```json\s*/i,"").replace(/^```\s*/i,"").replace(/```\s*$/i,"").trim();
           items = JSON.parse(raw);
           if (!Array.isArray(items)) throw new Error("not array");
         } catch {
-          items = tasks.slice(0, 30).map(t => ({ text: t, durationMin: 30, fixedTime: null, travelMin: 0 }));
+          items = tasks.slice(0,30).map(t=>({ text:String(t), durationMin:30, fixedTime:null, destinationAddress:null }));
         }
-        return new Response(JSON.stringify({ items }), { headers: { ...headers, "content-type": "application/json" } });
+
+        // Step 2 — geocode + route for tasks that have a destination address
+        const UA = "TaskupApp/1.0 (taskup.pages.dev)";
+        const geocode = async (addr) => {
+          if (!addr) return null;
+          try {
+            const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(addr)}&format=json&limit=1&countrycodes=il`, { headers:{"User-Agent":UA} });
+            const d = await r.json();
+            if (d[0]) return { lat: d[0].lat, lon: d[0].lon };
+          } catch {}
+          return null;
+        };
+        const routeMin = async (orig, dest) => {
+          try {
+            const r = await fetch(`https://router.project-osrm.org/route/v1/driving/${orig.lon},${orig.lat};${dest.lon},${dest.lat}?overview=false`, { headers:{"User-Agent":UA} });
+            const d = await r.json();
+            if (d.routes?.[0]) return Math.ceil(d.routes[0].duration / 60);
+          } catch {}
+          return null;
+        };
+
+        // Geocode home once
+        const homeCoord = homeAddress ? await geocode(homeAddress) : null;
+
+        const withTravel = await Promise.all(items.map(async item => {
+          if (!item.destinationAddress) return { ...item, travelMin: 0 };
+          const destCoord = await geocode(item.destinationAddress);
+          if (destCoord && homeCoord) {
+            const mins = await routeMin(homeCoord, destCoord);
+            if (mins !== null) return { ...item, travelMin: mins };
+          }
+          // Fallback: no routing data, keep 0 and let user know
+          return { ...item, travelMin: 0, travelNote: "לא הצלחתי לחשב זמן נסיעה — בדקי ידנית" };
+        }));
+
+        return new Response(JSON.stringify({ items: withTravel }), { headers: { ...headers, "content-type": "application/json" } });
       }
 
       if (request.method === "POST" && url.pathname === "/push/subscribe") {
