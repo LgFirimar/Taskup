@@ -593,6 +593,12 @@ export default function App() {
   };
   const toggleDailyScheduleItem = (id) => updateProfile(p=>({...p, dailySchedule:{...(p.dailySchedule||{}), [scheduleKey]:((p.dailySchedule||{})[scheduleKey]||[]).map(i=>i.id===id?{...i,done:!i.done}:i)}}));
   const deleteDailyScheduleItem = (id) => updateProfile(p=>({...p, dailySchedule:{...(p.dailySchedule||{}), [scheduleKey]:((p.dailySchedule||{})[scheduleKey]||[]).filter(i=>i.id!==id)}}));
+  const editDailyScheduleItem = (id, updates) => updateProfile(p=>({...p, dailySchedule:{...(p.dailySchedule||{}), [scheduleKey]:((p.dailySchedule||{})[scheduleKey]||[]).map(i=>i.id===id?{...i,...updates}:i)}}));
+  const replaceNonDoneDailyScheduleItems = (newItems) => updateProfile(p=>{
+    const schedule = pruneOldScheduleDates(p.dailySchedule);
+    const done = (schedule[scheduleKey]||[]).filter(i=>i.done);
+    return {...p, dailySchedule:{...schedule, [scheduleKey]:[...done,...newItems]}};
+  });
   const saveDailyScheduleSettings = (settings) => updateProfile(p=>({...p, dailyScheduleSettings:settings}));
   const nowMinForToday = () => { const n=new Date(); return n.getHours()*60+n.getMinutes(); };
   const dailySchedulePlan = useMemo(
@@ -2279,6 +2285,7 @@ export default function App() {
             items={dailyScheduleItems} plan={dailySchedulePlan} settings={dailyScheduleSettings}
             addItem={addDailyScheduleItem} addItems={addDailyScheduleItems}
             toggleItem={toggleDailyScheduleItem} deleteItem={deleteDailyScheduleItem}
+            editItem={editDailyScheduleItem} replaceItems={replaceNonDoneDailyScheduleItems}
             saveSettings={saveDailyScheduleSettings}
             yesterdayItems={yesterdayScheduleItems} loadYesterday={loadYesterdaySchedule}
           />

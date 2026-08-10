@@ -4,18 +4,10 @@ import { uid, WORKER_URL, minToHHMM } from "../utils";
 
 const PEACH = "#ea580c";
 
-// Full-screen לו"ז יומי overlay.
-//
-// Phase 1 — bulk input: type all today's tasks (one per line, Enter = new line).
-//   "תכלל ✦" calls Claude to estimate durations + fixed times + travel.
-// Phase 2 — schedule view: shows the AI-built timeline.
-//   Can add individual tasks one at a time.
-//   "טען אתמול" copies yesterday's items (if any) into today.
-//   3 AM reset: the todayKey passed from App already reflects the 3 AM boundary.
 export default function DailyScheduleOverlay({
   accent, setShowDailySchedule,
   items, plan, settings,
-  addItem, addItems, toggleItem, deleteItem,
+  addItem, addItems, toggleItem, deleteItem, editItem, replaceItems,
   saveSettings,
   yesterdayItems, loadYesterday,
 }) {
@@ -30,47 +22,94 @@ export default function DailyScheduleOverlay({
   const [singleInput, setSingleInput] = useState("");
   const [singleTime, setSingleTime] = useState("");
 
+  // Inline edit state
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState("");
+  const [editTime, setEditTime] = useState("");
+  const [editDuration, setEditDuration] = useState("");
+
   const hasItems = items.length > 0;
   const todayLabel = new Date().toLocaleDateString("he-IL", { weekday: "long", day: "numeric", month: "long" });
 
+  const callScheduleApi = async (texts) => {
+    const res = await fetch(`${WORKER_URL}/schedule`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tasks: texts, dayStart: settings.dayStart, dayEnd: settings.dayEnd, homeAddress: settings.homeAddress || "" }),
+    });
+    const data = await res.json();
+    if (!res.ok || !Array.isArray(data.items)) throw new Error(data.error || "שגיאה");
+    const newItems = data.items.map(it => ({
+      id: uid(),
+      text: it.text || "",
+      fixedTime: it.fixedTime || null,
+      durationMin: it.durationMin || 30,
+      travelMin: it.travelMin || 0,
+      done: false,
+      createdAt: Date.now(),
+    }));
+    const withTravel = [];
+    newItems.forEach(it => {
+      if (it.travelMin > 0) {
+        withTravel.push({ id: uid(), text: `🚗 נסיעה — ${it.text}`, fixedTime: null, durationMin: it.travelMin, done: false, createdAt: Date.now() - 1, isTravel: true });
+      }
+      withTravel.push(it);
+    });
+    return withTravel;
+  };
+
+  // Phase 1 — build from textarea
   const buildSchedule = useCallback(async () => {
     const lines = bulkText.split("\n").map(l => l.trim()).filter(Boolean);
     if (!lines.length) return;
     setAiLoading(true);
     setAiError(null);
     try {
-      const res = await fetch(`${WORKER_URL}/schedule`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tasks: lines, dayStart: settings.dayStart, dayEnd: settings.dayEnd, homeAddress: settings.homeAddress || "" }),
-      });
-      const data = await res.json();
-      if (!res.ok || !Array.isArray(data.items)) throw new Error(data.error || "שגיאה");
-      const newItems = data.items.map(it => ({
-        id: uid(),
-        text: it.text || "",
-        fixedTime: it.fixedTime || null,
-        durationMin: it.durationMin || 30,
-        travelMin: it.travelMin || 0,
-        done: false,
-        createdAt: Date.now(),
-      }));
-      // If travel needed, insert a travel block before the task
-      const withTravel = [];
-      newItems.forEach(it => {
-        if (it.travelMin > 0) {
-          withTravel.push({ id: uid(), text: `🚗 נסיעה — ${it.text}`, fixedTime: null, durationMin: it.travelMin, done: false, createdAt: Date.now() - 1, isTravel: true });
-        }
-        withTravel.push(it);
-      });
-      addItems(withTravel);
+      const scheduled = await callScheduleApi(lines);
+      addItems(scheduled);
       setBulkText("");
     } catch (e) {
       setAiError("לא הצלחתי לבנות לו\"ז — " + e.message);
     } finally {
       setAiLoading(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bulkText, settings, addItems]);
+
+  // Phase 2 — re-schedule existing non-done items
+  const rebuildSchedule = useCallback(async () => {
+    const pending = items.filter(i => !i.done);
+    if (!pending.length) return;
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const texts = pending.map(i => i.fixedTime ? `${i.text} בשעה ${i.fixedTime}` : i.text);
+      const scheduled = await callScheduleApi(texts);
+      replaceItems(scheduled);
+    } catch (e) {
+      setAiError("לא הצלחתי לתכלל מחדש — " + e.message);
+    } finally {
+      setAiLoading(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, settings, replaceItems]);
+
+  const startEdit = (item) => {
+    setEditingId(item.id);
+    setEditText(item.text);
+    setEditTime(item.fixedTime || "");
+    setEditDuration(String(item.durationMin || 30));
+  };
+  const saveEdit = () => {
+    if (!editText.trim()) return;
+    editItem(editingId, {
+      text: editText.trim(),
+      fixedTime: editTime || null,
+      durationMin: parseInt(editDuration, 10) || 30,
+    });
+    setEditingId(null);
+  };
+  const cancelEdit = () => setEditingId(null);
 
   const submitSingle = () => {
     if (!singleInput.trim()) return;
@@ -79,6 +118,50 @@ export default function DailyScheduleOverlay({
   };
 
   const pendingCount = plan.scheduled.filter(i => !i.done).length;
+
+  const renderItem = (item, dimmed = false) => {
+    const isEditing = editingId === item.id;
+    return (
+      <div key={item.id} style={{ padding: "10px 0", borderBottom: "1px solid #f5f5f4" }}>
+        {isEditing ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, background: "#fffdf5", borderRadius: 10, padding: "10px 12px", border: "1px solid #fde68a" }}>
+            <input autoFocus className="edit-inline" value={editText} onChange={e => setEditText(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") cancelEdit(); }}
+              style={{ fontSize: 15, fontWeight: 500 }} placeholder="טקסט המשימה" />
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <label style={{ fontSize: 12, color: "#6b6b6b", whiteSpace: "nowrap" }}>שעה קבועה</label>
+              <input type="time" className="plain-input" value={editTime} onChange={e => setEditTime(e.target.value)} style={{ fontSize: 13, padding: "4px 8px", width: 110 }} />
+              <label style={{ fontSize: 12, color: "#6b6b6b", whiteSpace: "nowrap" }}>משך (דק׳)</label>
+              <input type="number" className="plain-input" value={editDuration} onChange={e => setEditDuration(e.target.value)} min={5} max={480} style={{ fontSize: 13, padding: "4px 8px", width: 70 }} />
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={saveEdit} style={{ flex: 1, background: PEACH, color: "white", border: "none", borderRadius: 8, padding: "7px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Heebo',sans-serif" }}>שמור</button>
+              <button onClick={cancelEdit} style={{ background: "none", border: "1px solid #e5e5e3", borderRadius: 8, padding: "7px 14px", fontSize: 13, color: "#888", cursor: "pointer", fontFamily: "'Heebo',sans-serif" }}>ביטול</button>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 10, opacity: dimmed ? 0.5 : 1 }}>
+            <button onClick={() => toggleItem(item.id)} aria-label={`סמני "${item.text}" כבוצע`}
+              style={{ width: 20, height: 20, minWidth: 20, marginTop: 2, borderRadius: "50%", border: `1.5px solid ${PEACH}`, background: dimmed ? PEACH : "none", padding: 0, cursor: "pointer", flexShrink: 0 }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                {item.start != null && <span style={{ fontSize: 13, fontWeight: 700, color: item.isFixed ? PEACH : "#8a8a8a", minWidth: 40, flexShrink: 0 }}>{minToHHMM(item.start)}</span>}
+                {item.isFixed && <span title="שעה קבועה" style={{ fontSize: 10 }}>📌</span>}
+                {item.isTravel && <span style={{ fontSize: 10 }}>🚗</span>}
+                <span style={{ fontSize: 15, color: dimmed ? "#999" : "#1a1a1a", lineHeight: 1.5, textDecoration: dimmed ? "line-through" : "none" }}>{item.text}</span>
+              </div>
+              {item.start != null && <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>{item.durationMin} דק׳ · מסיים {minToHHMM(item.end)}{item.travelNote ? ` · ⚠️ ${item.travelNote}` : ""}</div>}
+            </div>
+            {!dimmed && (
+              <button onClick={() => startEdit(item)}
+                style={{ background: "none", border: "none", color: "#bbb", fontSize: 15, cursor: "pointer", padding: "2px 4px", lineHeight: 1 }} aria-label="ערוך">✎</button>
+            )}
+            <button onClick={() => deleteItem(item.id)} style={{ background: "none", border: "none", color: "#ccc", fontSize: 16, cursor: "pointer", padding: "2px 4px", lineHeight: 1 }} aria-label="מחק">✕</button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div ref={containerRef} role="dialog" aria-modal="true" aria-label='לו"ז יומי' tabIndex={-1}
@@ -107,7 +190,7 @@ export default function DailyScheduleOverlay({
             </button>
           )}
           {hasItems && (
-            <button onClick={() => setShowSettings(v => !v)} aria-label="הגדרות שעות היום"
+            <button onClick={() => setShowSettings(v => !v)} aria-label="הגדרות"
               style={{ background: "none", border: "none", fontSize: 13, color: "#6b6b6b", cursor: "pointer", fontFamily: "'Heebo',sans-serif" }}>
               ⚙️
             </button>
@@ -115,7 +198,7 @@ export default function DailyScheduleOverlay({
         </div>
       </div>
 
-      {/* Day-range + home address settings */}
+      {/* Settings panel */}
       {showSettings && (
         <div style={{ padding: "12px 20px", borderBottom: "1px solid #ebebea", display: "flex", flexDirection: "column", gap: 10, background: "#fafaf9", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -140,7 +223,7 @@ export default function DailyScheduleOverlay({
         </div>
       )}
 
-      {/* ── Phase 1: bulk input ── */}
+      {/* Phase 1: bulk input */}
       {!hasItems && (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", padding: "24px 20px 20px", gap: 16 }}>
           <div style={{ fontSize: 14, color: "#6b6b6b", fontWeight: 600 }}>
@@ -177,10 +260,10 @@ export default function DailyScheduleOverlay({
         </div>
       )}
 
-      {/* ── Phase 2: schedule view ── */}
+      {/* Phase 2: schedule view */}
       {hasItems && (
         <>
-          <div style={{ flex: 1, overflowY: "auto", padding: "8px 20px 160px" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: "8px 20px 180px" }}>
 
             {/* Progress bar */}
             {pendingCount > 0 && (
@@ -193,34 +276,13 @@ export default function DailyScheduleOverlay({
             )}
 
             {/* Scheduled items */}
-            {plan.scheduled.map(item => (
-              <div key={item.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 0", borderBottom: "1px solid #f5f5f4" }}>
-                <button onClick={() => toggleItem(item.id)} aria-label={`סמני "${item.text}" כבוצע`}
-                  style={{ width: 20, height: 20, minWidth: 20, marginTop: 2, borderRadius: "50%", border: `1.5px solid ${PEACH}`, background: "none", padding: 0, cursor: "pointer", flexShrink: 0 }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: item.isFixed ? PEACH : "#8a8a8a", minWidth: 40, flexShrink: 0 }}>{minToHHMM(item.start)}</span>
-                    {item.isFixed && <span title="שעה קבועה" style={{ fontSize: 10 }}>📌</span>}
-                    {item.isTravel && <span style={{ fontSize: 10 }}>🚗</span>}
-                    <span style={{ fontSize: 15, color: "#1a1a1a", lineHeight: 1.5 }}>{item.text}</span>
-                  </div>
-                  <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>{item.durationMin} דק׳ · מסיים {minToHHMM(item.end)}{item.travelNote ? ` · ⚠️ ${item.travelNote}` : ""}</div>
-                </div>
-                <button onClick={() => deleteItem(item.id)} style={{ background: "none", border: "none", color: "#ccc", fontSize: 16, cursor: "pointer", padding: "2px 4px", lineHeight: 1 }} aria-label="מחק">✕</button>
-              </div>
-            ))}
+            {plan.scheduled.map(item => renderItem(item, false))}
 
             {/* Overflow */}
             {plan.overflow.length > 0 && (
               <div style={{ marginTop: 16, background: "#fef2f2", borderRadius: 12, padding: "12px 16px" }}>
                 <div style={{ fontSize: 12, color: "#dc2626", fontWeight: 700, marginBottom: 8 }}>⚠️ לא נכנס ללו"ז היום (אין מספיק זמן עד {settings.dayEnd})</div>
-                {plan.overflow.map(item => (
-                  <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0" }}>
-                    <button onClick={() => toggleItem(item.id)} style={{ width: 18, height: 18, minWidth: 18, borderRadius: "50%", border: "1.5px solid #dc2626", background: "none", padding: 0, cursor: "pointer", flexShrink: 0 }} />
-                    <span style={{ flex: 1, fontSize: 14, color: "#1a1a1a" }}>{item.text}</span>
-                    <button onClick={() => deleteItem(item.id)} style={{ background: "none", border: "none", color: "#ccc", fontSize: 16, cursor: "pointer", padding: "2px 4px" }} aria-label="מחק">✕</button>
-                  </div>
-                ))}
+                {plan.overflow.map(item => renderItem(item, false))}
               </div>
             )}
 
@@ -230,28 +292,32 @@ export default function DailyScheduleOverlay({
                 style={{ background: "none", border: "none", cursor: "pointer", fontFamily: "'Heebo',sans-serif", fontSize: 12, color: "#6b6b6b", fontWeight: 600, padding: "14px 4px 6px", display: "flex", alignItems: "center", gap: 6 }}>
                 ✅ בוצע ({plan.done.length}) <span style={{ fontSize: 9 }}>{showDone ? "▲" : "▼"}</span>
               </button>
-              {showDone && plan.done.map(item => (
-                <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", opacity: 0.5 }}>
-                  <button onClick={() => toggleItem(item.id)} style={{ width: 20, height: 20, minWidth: 20, borderRadius: "50%", border: `1.5px solid ${PEACH}`, background: PEACH, padding: 0, cursor: "pointer", flexShrink: 0 }} />
-                  <span style={{ flex: 1, fontSize: 14, color: "#999", textDecoration: "line-through" }}>{item.text}</span>
-                  <button onClick={() => deleteItem(item.id)} style={{ background: "none", border: "none", color: "#ddd", fontSize: 16, cursor: "pointer", padding: "2px 4px" }} aria-label="מחק">✕</button>
-                </div>
-              ))}
+              {showDone && plan.done.map(item => renderItem(item, true))}
             </>)}
           </div>
 
-          {/* Fixed add bar */}
-          <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, padding: "12px 20px", paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))", borderTop: "1px solid #ebebea", background: "white", zIndex: 201 }}>
-            <div style={{ fontSize: 11, color: "#6b6b6b", marginBottom: 6, fontWeight: 600 }}>הוסיפי משימה — שעה רק אם חייב להיות בדיוק אז</div>
+          {/* Fixed bottom bar */}
+          <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, padding: "10px 20px", paddingBottom: "calc(10px + env(safe-area-inset-bottom, 0px))", borderTop: "1px solid #ebebea", background: "white", zIndex: 201, display: "flex", flexDirection: "column", gap: 8 }}>
+            {aiError && <div style={{ fontSize: 12, color: "#dc2626", background: "#fef2f2", borderRadius: 8, padding: "6px 10px" }}>{aiError}</div>}
+            {/* Single-add row */}
             <div style={{ display: "flex", gap: 8 }}>
-              <input className="plain-input" style={{ flex: 1, fontSize: 15 }} placeholder="מה עוד יש להיום?" value={singleInput}
+              <input className="plain-input" style={{ flex: 1, fontSize: 15 }} placeholder="הוסיפי משימה..." value={singleInput}
                 onChange={e => setSingleInput(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") submitSingle(); }} />
-              <input type="time" className="plain-input" style={{ fontSize: 15, width: 100 }} value={singleTime}
+              <input type="time" className="plain-input" style={{ fontSize: 15, width: 96 }} value={singleTime}
                 onChange={e => setSingleTime(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") submitSingle(); }} />
-              <button className="add-btn" style={{ minWidth: 48, background: `linear-gradient(135deg,${PEACH},#c2410c)` }} aria-label='הוסף משימה ללו"ז' onClick={submitSingle}>+</button>
+              <button className="add-btn" style={{ minWidth: 44, background: `linear-gradient(135deg,${PEACH},#c2410c)` }} aria-label='הוסף משימה ללו"ז' onClick={submitSingle}>+</button>
             </div>
+            {/* Rebuild row */}
+            <button
+              onClick={rebuildSchedule}
+              disabled={aiLoading || items.filter(i => !i.done).length === 0}
+              style={{ width: "100%", background: aiLoading ? "#f5f5f4" : "#fff4ed", color: aiLoading ? "#aaa" : PEACH, border: `1px solid ${PEACH}40`, borderRadius: 10, padding: "9px 0", fontSize: 14, fontWeight: 700, cursor: aiLoading ? "default" : "pointer", fontFamily: "'Heebo',sans-serif", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "all 0.2s" }}>
+              {aiLoading
+                ? <><div style={{ width: 15, height: 15, borderRadius: "50%", border: "2px solid #ddd", borderTop: `2px solid ${PEACH}`, animation: "spin 0.8s linear infinite" }} /> מתכלל...</>
+                : <>✦ תכלל מחדש</>}
+            </button>
           </div>
         </>
       )}
