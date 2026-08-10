@@ -35,7 +35,7 @@ export const APP_CSS = `
     .tab-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
 
     /* ── Category summary cards ── */
-    .cat-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;margin:0 20px 20px;}
+    .cat-grid{display:grid;grid-template-columns:auto 1fr 1fr;gap:10px;margin:0 20px 20px;}
     .cat-card{border-radius:16px;padding:16px;cursor:pointer;transition:all 0.18s;}
     .cat-card-schedule{padding:16px 14px;min-width:72px;}
     .cat-card:hover{transform:translateY(-1px);filter:brightness(0.97);}

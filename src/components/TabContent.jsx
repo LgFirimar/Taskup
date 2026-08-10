@@ -152,6 +152,10 @@ export default function TabContent({
   return (<>
     {/* Category summary cards */}
     <div className="cat-grid">
+      <div className="cat-card cat-card-schedule" style={{background:"#fff4ed"}} onClick={()=>setShowDailySchedule&&setShowDailySchedule(true)}>
+        <div className="cat-card-title" style={{color:"#c2410c"}}>לו"ז</div>
+        <div className="cat-card-sub">{dailyScheduleCount||0} משימות</div>
+      </div>
       <div className="cat-card" style={{background:"#eaf5f0"}} onClick={()=>setActiveSubtab(null)}>
         <div className="cat-card-title" style={{color:"#2d7a5a"}}>משימות</div>
         <div className="cat-card-sub">{allPendingTasks.length} פתוחות</div>
@@ -159,10 +163,6 @@ export default function TabContent({
       <div className="cat-card" style={{background:"#ede8f8"}} onClick={()=>setActiveSubtab(null)}>
         <div className="cat-card-title" style={{color:"#6b5ca8"}}>תזכורות</div>
         <div className="cat-card-sub">{sortedReminderGroups.flatMap(g=>g.reminders).length} פעילות</div>
-      </div>
-      <div className="cat-card cat-card-schedule" style={{background:"#fff4ed"}} onClick={()=>setShowDailySchedule&&setShowDailySchedule(true)}>
-        <div className="cat-card-title" style={{color:"#c2410c"}}>לו"ז</div>
-        <div className="cat-card-sub">{dailyScheduleCount||0} משימות</div>
       </div>
     </div>
 
