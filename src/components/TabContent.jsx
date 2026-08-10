@@ -1,4 +1,4 @@
-import { useSensor, useSensors, DndContext, closestCenter, PointerSensor, TouchSensor } from "@dnd-kit/core";
+import { useSensor, useSensors, DndContext, closestCenter, MouseSensor, TouchSensor } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { PRIO_COLOR, formatDate, getReminderStatus, getDaysUntil } from "../utils";
@@ -9,9 +9,9 @@ function SortableItem({ id, children }) {
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1 }}>
       {children({
         dragHandle: (
-          <button ref={setActivatorNodeRef} {...listeners} {...attributes} tabIndex={-1}
-            style={{ background:"none", border:"none", cursor:"grab", color:"#bbb", fontSize:20, padding:"4px 8px", touchAction:"none", lineHeight:1, flexShrink:0, display:"flex", alignItems:"center", minWidth:36, minHeight:36, justifyContent:"center" }}
-            aria-label="גרור לשינוי סדר">⠿</button>
+          <div ref={setActivatorNodeRef} {...listeners} {...attributes} role="button" tabIndex={-1}
+            style={{ cursor:"grab", color:"#bbb", fontSize:20, padding:"4px 8px", touchAction:"none", userSelect:"none", WebkitUserSelect:"none", lineHeight:1, flexShrink:0, display:"flex", alignItems:"center", minWidth:36, minHeight:36, justifyContent:"center" }}
+            aria-label="גרור לשינוי סדר">⠿</div>
         ),
       })}
     </div>
@@ -42,8 +42,8 @@ export default function TabContent({
   reorderTask,
 }) {
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 10 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
   );
 
   const renderTaskRow = (item, dragHandle = null) => {
