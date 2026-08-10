@@ -157,8 +157,6 @@ export default function App() {
 
   // ── Daily schedule (לו"ז יומי) ───────────────────────────────────────────────
   const [showDailySchedule,setShowDailySchedule] = useState(false);
-  const [dailyScheduleInput,setDailyScheduleInput] = useState("");
-  const [dailyScheduleTimeInput,setDailyScheduleTimeInput] = useState("");
 
   // ── Projects ──────────────────────────────────────────────────────────────
   const [showProjects,setShowProjects] = useState(false);
@@ -557,31 +555,44 @@ export default function App() {
   };
 
   // ── Daily schedule (לו"ז יומי) ───────────────────────────────────────────────
-  // Scoped to "today" only (by design — this is a same-day planning tool, not
-  // a calendar), keyed by date string so yesterday's plan doesn't bleed into
-  // today's. Old dates are pruned (kept 14 days back, for anyone who wants to
-  // glance at "what did I plan yesterday") whenever a write happens, so this
-  // doesn't grow unbounded the way email_summaries did before that got fixed.
-  const todayKey = today();
+  // Resets at 3:00 AM — before that hour the "effective today" is still
+  // yesterday so late-night sessions don't lose their schedule at midnight.
+  const scheduleKey = (() => {
+    const n = new Date();
+    if (n.getHours() < 3) { const y = new Date(n); y.setDate(y.getDate()-1); return y.toISOString().split("T")[0]; }
+    return today();
+  })();
+  const yesterdayScheduleKey = (() => { const d = new Date(); d.setDate(d.getDate()-1); return d.toISOString().split("T")[0]; })();
   const dailyScheduleSettings = getProfile().dailyScheduleSettings || { dayStart:"08:00", dayEnd:"21:00" };
-  const dailyScheduleItems = (getProfile().dailySchedule || {})[todayKey] || [];
+  const dailyScheduleItems = (getProfile().dailySchedule || {})[scheduleKey] || [];
+  const yesterdayScheduleItems = (getProfile().dailySchedule || {})[yesterdayScheduleKey] || [];
   const pruneOldScheduleDates = (schedule) => {
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate()-14);
     const cutoffKey = cutoff.toISOString().split("T")[0];
-    return Object.fromEntries(Object.entries(schedule||{}).filter(([k])=>k>=cutoffKey || k===todayKey));
+    return Object.fromEntries(Object.entries(schedule||{}).filter(([k])=>k>=cutoffKey || k===scheduleKey));
   };
-  const addDailyScheduleItem = (text, fixedTime) => {
+  const addDailyScheduleItem = (text, fixedTime, durationMin=30) => {
     if (!text.trim()) return;
     updateProfile(p=>{
       const schedule = pruneOldScheduleDates(p.dailySchedule);
-      const dayItems = schedule[todayKey]||[];
-      const item = { id:uid(), text:text.trim(), fixedTime:fixedTime||null, durationMin:30, done:false, createdAt:Date.now() };
-      return { ...p, dailySchedule: { ...schedule, [todayKey]: [...dayItems, item] } };
+      const dayItems = schedule[scheduleKey]||[];
+      const item = { id:uid(), text:text.trim(), fixedTime:fixedTime||null, durationMin:durationMin||30, done:false, createdAt:Date.now() };
+      return { ...p, dailySchedule: { ...schedule, [scheduleKey]: [...dayItems, item] } };
     });
   };
-  const toggleDailyScheduleItem = (id) => updateProfile(p=>({...p, dailySchedule:{...(p.dailySchedule||{}), [todayKey]:((p.dailySchedule||{})[todayKey]||[]).map(i=>i.id===id?{...i,done:!i.done}:i)}}));
-  const deleteDailyScheduleItem = (id) => updateProfile(p=>({...p, dailySchedule:{...(p.dailySchedule||{}), [todayKey]:((p.dailySchedule||{})[todayKey]||[]).filter(i=>i.id!==id)}}));
-  const setDailyScheduleItemTime = (id, fixedTime) => updateProfile(p=>({...p, dailySchedule:{...(p.dailySchedule||{}), [todayKey]:((p.dailySchedule||{})[todayKey]||[]).map(i=>i.id===id?{...i,fixedTime:fixedTime||null}:i)}}));
+  const addDailyScheduleItems = (newItems) => {
+    updateProfile(p=>{
+      const schedule = pruneOldScheduleDates(p.dailySchedule);
+      return { ...p, dailySchedule: { ...schedule, [scheduleKey]: [...(schedule[scheduleKey]||[]), ...newItems] } };
+    });
+  };
+  const loadYesterdaySchedule = () => {
+    if (!yesterdayScheduleItems.length) return;
+    const fresh = yesterdayScheduleItems.map(i=>({...i, id:uid(), done:false, createdAt:Date.now()}));
+    addDailyScheduleItems(fresh);
+  };
+  const toggleDailyScheduleItem = (id) => updateProfile(p=>({...p, dailySchedule:{...(p.dailySchedule||{}), [scheduleKey]:((p.dailySchedule||{})[scheduleKey]||[]).map(i=>i.id===id?{...i,done:!i.done}:i)}}));
+  const deleteDailyScheduleItem = (id) => updateProfile(p=>({...p, dailySchedule:{...(p.dailySchedule||{}), [scheduleKey]:((p.dailySchedule||{})[scheduleKey]||[]).filter(i=>i.id!==id)}}));
   const saveDailyScheduleSettings = (settings) => updateProfile(p=>({...p, dailyScheduleSettings:settings}));
   const nowMinForToday = () => { const n=new Date(); return n.getHours()*60+n.getMinutes(); };
   const dailySchedulePlan = useMemo(
@@ -2265,10 +2276,10 @@ export default function App() {
             accent={accent}
             setShowDailySchedule={setShowDailySchedule}
             items={dailyScheduleItems} plan={dailySchedulePlan} settings={dailyScheduleSettings}
-            addItem={addDailyScheduleItem} toggleItem={toggleDailyScheduleItem} deleteItem={deleteDailyScheduleItem} setItemTime={setDailyScheduleItemTime}
+            addItem={addDailyScheduleItem} addItems={addDailyScheduleItems}
+            toggleItem={toggleDailyScheduleItem} deleteItem={deleteDailyScheduleItem}
             saveSettings={saveDailyScheduleSettings}
-            textInput={dailyScheduleInput} setTextInput={setDailyScheduleInput}
-            timeInput={dailyScheduleTimeInput} setTimeInput={setDailyScheduleTimeInput}
+            yesterdayItems={yesterdayScheduleItems} loadYesterday={loadYesterdaySchedule}
           />
         )}
 
@@ -2449,6 +2460,8 @@ export default function App() {
 
         <TabContent
           accent={accent}
+          setShowDailySchedule={setShowDailySchedule}
+          dailyScheduleCount={dailyScheduleItems.filter(i=>!i.done).length}
           currentTab={currentTab} activeSubtab={activeSubtab} setActiveSubtab={setActiveSubtab}
           showNewSub={showNewSub} setShowNewSub={setShowNewSub} newSubInput={newSubInput} setNewSubInput={setNewSubInput} addSubtab={addSubtab} deleteSubtab={deleteSubtab}
           allPendingTasks={allPendingTasks} sortedReminderGroups={sortedReminderGroups}

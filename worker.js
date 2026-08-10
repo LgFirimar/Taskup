@@ -359,6 +359,38 @@ export default {
         return new Response(JSON.stringify(parsed), { headers: { ...headers, "content-type": "application/json" } });
       }
 
+      if (request.method === "POST" && url.pathname === "/schedule") {
+        const { tasks, dayStart, dayEnd } = await request.json();
+        if (!Array.isArray(tasks) || tasks.length === 0) {
+          return new Response(JSON.stringify({ error: "Missing tasks" }), { status: 400, headers: { ...headers, "content-type": "application/json" } });
+        }
+        const taskList = tasks.slice(0, 30).map((t, i) => `${i + 1}. ${String(t).slice(0, 200)}`).join("\n");
+        const text = await callClaude(env, {
+          maxTokens: 900,
+          prompt: `אתה עוזר לתכנון יום. שעות פעילות: ${dayStart || "08:00"} עד ${dayEnd || "21:00"}.
+
+רשימת המשימות להיום:
+${taskList}
+
+לכל משימה הערך:
+- durationMin: כמה דקות תיקח (15 עד 180)
+- fixedTime: שעה קבועה HH:MM אם המשימה חייבת להיות בזמן מסוים (כמו "איסוף ילדים ב-15:30"), אחרת null
+- travelMin: דקות נסיעה אם המשימה מחוץ לבית, אחרת 0
+
+החזר JSON בלבד, מערך בדיוק בפורמט הזה (ללא טקסט נוסף):
+[{"text":"שם המשימה","durationMin":30,"fixedTime":null,"travelMin":0}]`,
+        });
+        let items;
+        try {
+          const raw = text.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
+          items = JSON.parse(raw);
+          if (!Array.isArray(items)) throw new Error("not array");
+        } catch {
+          items = tasks.slice(0, 30).map(t => ({ text: t, durationMin: 30, fixedTime: null, travelMin: 0 }));
+        }
+        return new Response(JSON.stringify({ items }), { headers: { ...headers, "content-type": "application/json" } });
+      }
+
       if (request.method === "POST" && url.pathname === "/push/subscribe") {
         if (!env.PUSH_KV) {
           return new Response(JSON.stringify({ error: "Push notifications aren't configured on the server yet." }), { status: 503, headers: { ...headers, "content-type": "application/json" } });

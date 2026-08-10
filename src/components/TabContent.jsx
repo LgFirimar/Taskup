@@ -5,6 +5,7 @@ import { PRIO_COLOR, formatDate, getReminderStatus, getDaysUntil } from "../util
 // two-column board (including inline task-row and reminder-card rendering).
 export default function TabContent({
   accent,
+  setShowDailySchedule, dailyScheduleCount,
   currentTab, activeSubtab, setActiveSubtab,
   showNewSub, setShowNewSub, newSubInput, setNewSubInput, addSubtab, deleteSubtab,
   allPendingTasks, sortedReminderGroups,
@@ -158,6 +159,10 @@ export default function TabContent({
       <div className="cat-card" style={{background:"#ede8f8"}} onClick={()=>setActiveSubtab(null)}>
         <div className="cat-card-title" style={{color:"#6b5ca8"}}>תזכורות</div>
         <div className="cat-card-sub">{sortedReminderGroups.flatMap(g=>g.reminders).length} פעילות</div>
+      </div>
+      <div className="cat-card cat-card-schedule" style={{background:"#fff4ed"}} onClick={()=>setShowDailySchedule&&setShowDailySchedule(true)}>
+        <div className="cat-card-title" style={{color:"#c2410c"}}>לו"ז</div>
+        <div className="cat-card-sub">{dailyScheduleCount||0} משימות</div>
       </div>
     </div>
 
