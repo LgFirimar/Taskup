@@ -40,11 +40,30 @@ export default function DailyScheduleOverlay({
   const dragPendingRef = useRef([]);
   const reorderFnRef = useRef(null);
 
+  // Merge travel items into their successor so they display as one row
+  const mergeTravel = (items) => {
+    const result = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].isTravel && i + 1 < items.length) {
+        result.push({ ...items[i + 1], _travel: items[i] });
+        i++;
+      } else if (!items[i].isTravel) {
+        result.push(items[i]);
+      }
+    }
+    return result;
+  };
+
   const reorderScheduled = useCallback((fromIdx, toIdx) => {
-    const list = [...dragPendingRef.current];
+    const list = [...dragPendingRef.current]; // displayItems (merged)
     const [moved] = list.splice(fromIdx, 1);
     list.splice(toIdx, 0, moved);
-    replaceItems(list);
+    // Flatten back: each display item may carry a _travel predecessor
+    const actual = list.flatMap(it => {
+      const { _travel, ...main } = it;
+      return _travel ? [_travel, main] : [main];
+    });
+    replaceItems(actual);
   }, [replaceItems]);
   reorderFnRef.current = reorderScheduled;
 
@@ -172,7 +191,7 @@ export default function DailyScheduleOverlay({
 
   // Phase 2 — re-schedule existing non-done items
   const rebuildSchedule = useCallback(async () => {
-    const pending = items.filter(i => !i.done);
+    const pending = items.filter(i => !i.done && !i.isTravel);
     if (!pending.length) return;
     setAiLoading(true);
     setAiError(null);
@@ -246,6 +265,11 @@ export default function DailyScheduleOverlay({
                 <span style={{ fontSize: 15, color: dimmed ? "#999" : "#1a1a1a", lineHeight: 1.5, textDecoration: dimmed ? "line-through" : "none" }}>{item.text}</span>
               </div>
               {item.start != null && <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>{item.durationMin} דק׳ · מסיים {minToHHMM(item.end)}{item.travelNote ? ` · ⚠️ ${item.travelNote}` : ""}</div>}
+              {item._travel && item._travel.start != null && (
+                <div style={{ fontSize: 12, color: PEACH, fontWeight: 600, marginTop: 4 }}>
+                  🚗 זמן נסיעה {item._travel.durationMin} דק׳ · יש לצאת ב-{minToHHMM(item._travel.start)}
+                </div>
+              )}
             </div>
             {!dimmed && (
               <button onClick={() => startEdit(item)}
@@ -370,12 +394,13 @@ export default function DailyScheduleOverlay({
               </div>
             )}
 
-            {/* Scheduled items — draggable */}
+            {/* Scheduled items — draggable, travel merged into successor */}
             {(() => {
-              dragPendingRef.current = plan.scheduled;
+              const displayItems = mergeTravel(plan.scheduled);
+              dragPendingRef.current = displayItems;
               return (
                 <div ref={scheduleContainerRef}>
-                  {plan.scheduled.map((item, idx) => {
+                  {displayItems.map((item, idx) => {
                     const isDragging = item.id === dragId;
                     const isDropHere = dragId && !isDragging && dropIdx === idx;
                     const handle = (
@@ -401,7 +426,7 @@ export default function DailyScheduleOverlay({
             {plan.overflow.length > 0 && (
               <div style={{ marginTop: 16, background: "#fef2f2", borderRadius: 12, padding: "12px 16px" }}>
                 <div style={{ fontSize: 12, color: "#dc2626", fontWeight: 700, marginBottom: 8 }}>⚠️ לא נכנס ללו"ז היום (אין מספיק זמן עד {settings.dayEnd})</div>
-                {plan.overflow.map(item => renderItem(item, false))}
+                {mergeTravel(plan.overflow).map(item => renderItem(item, false))}
               </div>
             )}
 
