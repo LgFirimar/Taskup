@@ -2050,6 +2050,7 @@ export default function App() {
 
   // ── Tasks & reminders ─────────────────────────────────────────────────────
   const addTask = ()=>{ const text=taskInput.trim(); if(!text)return; updateCtx(c=>({...c,tasks:[...c.tasks,{id:uid(),text,done:false,createdAt:today(),subtasks:[],priority:null,dueDate:null}]})); setTaskInput(""); };
+  const reorderTask = (oldIdx, newIdx) => updateCtx(c=>{ const tasks=[...c.tasks.filter(t=>!t.done),...c.tasks.filter(t=>t.done)]; const pending=c.tasks.filter(t=>!t.done); const [moved]=pending.splice(oldIdx,1); pending.splice(newIdx,0,moved); return {...c,tasks:[...pending,...c.tasks.filter(t=>t.done)]}; });
   const addReminder = ()=>{
     const text=reminderInput.trim(); if(!text)return;
     updateCtx(c=>({...c,reminders:[...c.reminders,{id:uid(),text,done:false,createdAt:today(),startDate:reminderStart||null,endDate:reminderEnd||null,alertDate:reminderAlertDate||null}]}));
@@ -2477,6 +2478,7 @@ export default function App() {
           cyclePriority={cyclePriority} handleBigComplete={handleBigComplete}
           breakingDownId={breakingDownId} breakdownTaskDirect={breakdownTaskDirect} breakdownTask={breakdownTask} pendingBreakdown={pendingBreakdown} setPendingBreakdown={setPendingBreakdown} confirmBreakdown={confirmBreakdown}
           expandedTaskId={expandedTaskId} setExpandedTaskId={setExpandedTaskId} subtaskInput={subtaskInput} setSubtaskInput={setSubtaskInput} addSubtask={addSubtask} toggleSubtask={toggleSubtask} deleteSubtask={deleteSubtask}
+          reorderTask={reorderTask}
         />
       </div>
     </div>

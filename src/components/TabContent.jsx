@@ -1,4 +1,22 @@
+import { useSensor, useSensors, DndContext, closestCenter, PointerSensor, TouchSensor } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { PRIO_COLOR, formatDate, getReminderStatus, getDaysUntil } from "../utils";
+
+function SortableItem({ id, children }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}>
+      {children({
+        dragHandle: (
+          <button {...listeners} {...attributes} tabIndex={-1}
+            style={{ background:"none", border:"none", cursor:"grab", color:"#ccc", fontSize:18, padding:"2px 6px", touchAction:"none", lineHeight:1, flexShrink:0, display:"flex", alignItems:"center" }}
+            aria-label="גרור לשינוי סדר">⠿</button>
+        ),
+      })}
+    </div>
+  );
+}
 
 // Everything below the tab bar for the currently active tab: the empty
 // state, the two summary cards, the subtabs row, and the tasks/reminders
@@ -21,14 +39,21 @@ export default function TabContent({
   cyclePriority, handleBigComplete,
   breakingDownId, breakdownTaskDirect, breakdownTask, pendingBreakdown, setPendingBreakdown, confirmBreakdown,
   expandedTaskId, setExpandedTaskId, subtaskInput, setSubtaskInput, addSubtask, toggleSubtask, deleteSubtask,
+  reorderTask,
 }) {
-  const renderTaskRow = (item) => {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
+  );
+
+  const renderTaskRow = (item, dragHandle = null) => {
     const prioColor = item.priority?PRIO_COLOR[item.priority]:null;
     const prioClass = item.priority?` prio-${item.priority}`:"";
     const hasPending = pendingBreakdown?.taskId===item.id;
     return (
       <div key={item.id} className={`task-row${prioClass}`} style={{flexDirection:"column",gap:0}}>
         <div style={{display:"flex",alignItems:"flex-start",gap:10,width:"100%"}}>
+          {dragHandle}
           {/* Priority dot */}
           <button className="prio-dot" style={{background:prioColor||"white",borderColor:prioColor||"#d8d7cf","--accent":accent}} title="הגדרי עדיפות" aria-label="הגדרי עדיפות"
             onClick={()=>cyclePriority(item.id)}/>
@@ -201,7 +226,7 @@ export default function TabContent({
 
           {allPendingTasks.length===0&&<div className="empty-state">אין משימות פתוחות</div>}
 
-          {/* Aggregate: group by source */}
+          {/* Aggregate: group by source (no drag) */}
           {isAggregate ? (
             taskGroups.map((group,gi)=>{
               const pending=group.tasks.filter(t=>!t.done);
@@ -213,11 +238,29 @@ export default function TabContent({
                 </div>
               );
             })
-          ) : (
-            taskGroups[0].tasks.filter(t=>!t.done).length>0
-              ? <div className="task-group-wrap">{taskGroups[0].tasks.filter(t=>!t.done).map(item=>renderTaskRow(item))}</div>
-              : null
-          )}
+          ) : (() => {
+            const pending = taskGroups[0].tasks.filter(t=>!t.done);
+            if (!pending.length) return null;
+            const handleDragEnd = ({ active, over }) => {
+              if (!over || active.id === over.id) return;
+              const oldIdx = pending.findIndex(t => t.id === active.id);
+              const newIdx = pending.findIndex(t => t.id === over.id);
+              if (oldIdx !== -1 && newIdx !== -1) reorderTask(oldIdx, newIdx);
+            };
+            return (
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                <SortableContext items={pending.map(t=>t.id)} strategy={verticalListSortingStrategy}>
+                  <div className="task-group-wrap">
+                    {pending.map(item=>(
+                      <SortableItem key={item.id} id={item.id}>
+                        {({dragHandle})=>renderTaskRow(item, dragHandle)}
+                      </SortableItem>
+                    ))}
+                  </div>
+                </SortableContext>
+              </DndContext>
+            );
+          })()}
 
           {allDoneTasks.length>0&&<>
             <button className="section-label" onClick={()=>setShowDoneTasks(p=>!p)} style={{background:"none",border:"none",padding:0,width:"100%",display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>
