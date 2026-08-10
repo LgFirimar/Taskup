@@ -1,4 +1,5 @@
-import { useSensor, useSensors, DndContext, closestCenter, MouseSensor, TouchSensor } from "@dnd-kit/core";
+import { useState } from "react";
+import { useSensor, useSensors, DndContext, closestCenter, MouseSensor, TouchSensor, DragOverlay } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { PRIO_COLOR, formatDate, getReminderStatus, getDaysUntil } from "../utils";
@@ -6,11 +7,12 @@ import { PRIO_COLOR, formatDate, getReminderStatus, getDaysUntil } from "../util
 function SortableItem({ id, children }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });
   return (
-    <div ref={setNodeRef} {...attributes} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1 }}>
+    // When dragging, hide the original in-place copy (DragOverlay shows the ghost)
+    <div ref={setNodeRef} {...attributes} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0 : 1 }}>
       {children({
         dragHandle: (
           <div ref={setActivatorNodeRef} {...listeners}
-            style={{ cursor:"grab", color:"#bbb", fontSize:20, padding:"4px 8px", touchAction:"none", userSelect:"none", WebkitUserSelect:"none", lineHeight:1, flexShrink:0, display:"flex", alignItems:"center", minWidth:36, minHeight:44, justifyContent:"center" }}
+            style={{ cursor:"grab", color:"#ccc", fontSize:22, padding:"4px 8px", touchAction:"none", userSelect:"none", WebkitUserSelect:"none", lineHeight:1, flexShrink:0, display:"flex", alignItems:"center", minWidth:36, minHeight:44, justifyContent:"center" }}
             aria-label="גרור">⠿</div>
         ),
       })}
@@ -45,6 +47,7 @@ export default function TabContent({
     useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
   );
+  const [activeDragId, setActiveDragId] = useState(null);
 
   const renderTaskRow = (item, dragHandle = null) => {
     const prioColor = item.priority?PRIO_COLOR[item.priority]:null;
@@ -226,27 +229,42 @@ export default function TabContent({
 
           {allPendingTasks.length===0&&<div className="empty-state">אין משימות פתוחות</div>}
 
-          {/* First group (current tab/subtab tasks) always gets drag handles */}
-          {(() => {
+          {/* First group (current tab/subtab tasks) — draggable list */}
+          {(()=>{
             const pending = taskGroups[0].tasks.filter(t=>!t.done);
             if (!pending.length) return null;
-            const handleDragEnd = ({ active, over }) => {
-              if (!over || active.id === over.id) return;
-              const oldIdx = pending.findIndex(t => t.id === active.id);
-              const newIdx = pending.findIndex(t => t.id === over.id);
-              if (oldIdx !== -1 && newIdx !== -1) reorderTask(oldIdx, newIdx);
-            };
+            const activeTask = activeDragId ? pending.find(t=>t.id===activeDragId) : null;
             return (
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragStart={({active})=>setActiveDragId(active.id)}
+                onDragEnd={({active,over})=>{
+                  setActiveDragId(null);
+                  if(!over||active.id===over.id)return;
+                  const oldIdx=pending.findIndex(t=>t.id===active.id);
+                  const newIdx=pending.findIndex(t=>t.id===over.id);
+                  if(oldIdx!==-1&&newIdx!==-1)reorderTask(oldIdx,newIdx);
+                }}
+                onDragCancel={()=>setActiveDragId(null)}
+              >
                 <SortableContext items={pending.map(t=>t.id)} strategy={verticalListSortingStrategy}>
                   <div className="task-group-wrap">
                     {pending.map(item=>(
                       <SortableItem key={item.id} id={item.id}>
-                        {({dragHandle})=>renderTaskRow(item, dragHandle)}
+                        {({dragHandle})=>renderTaskRow(item,dragHandle)}
                       </SortableItem>
                     ))}
                   </div>
                 </SortableContext>
+                {/* DragOverlay renders outside overflow:hidden so the ghost is never clipped */}
+                <DragOverlay dropAnimation={null}>
+                  {activeTask?(
+                    <div style={{background:"white",borderRadius:10,boxShadow:"0 8px 28px rgba(0,0,0,0.18)",opacity:0.96}}>
+                      {renderTaskRow(activeTask,<div style={{cursor:"grabbing",color:"#ccc",fontSize:22,padding:"4px 8px",display:"flex",alignItems:"center",minWidth:36,minHeight:44,justifyContent:"center"}}>⠿</div>)}
+                    </div>
+                  ):null}
+                </DragOverlay>
               </DndContext>
             );
           })()}
