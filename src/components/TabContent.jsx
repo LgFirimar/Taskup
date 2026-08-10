@@ -1,24 +1,5 @@
-import { useState } from "react";
-import { useSensor, useSensors, DndContext, closestCenter, MouseSensor, TouchSensor, DragOverlay } from "@dnd-kit/core";
-import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
+import { useState, useRef, useCallback } from "react";
 import { PRIO_COLOR, formatDate, getReminderStatus, getDaysUntil } from "../utils";
-
-function SortableItem({ id, children }) {
-  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });
-  return (
-    // When dragging, hide the original in-place copy (DragOverlay shows the ghost)
-    <div ref={setNodeRef} {...attributes} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0 : 1 }}>
-      {children({
-        dragHandle: (
-          <div ref={setActivatorNodeRef} {...listeners}
-            style={{ cursor:"grab", color:"#ccc", fontSize:22, padding:"4px 8px", touchAction:"none", userSelect:"none", WebkitUserSelect:"none", lineHeight:1, flexShrink:0, display:"flex", alignItems:"center", minWidth:36, minHeight:44, justifyContent:"center" }}
-            aria-label="גרור">⠿</div>
-        ),
-      })}
-    </div>
-  );
-}
 
 // Everything below the tab bar for the currently active tab: the empty
 // state, the two summary cards, the subtabs row, and the tasks/reminders
@@ -43,11 +24,83 @@ export default function TabContent({
   expandedTaskId, setExpandedTaskId, subtaskInput, setSubtaskInput, addSubtask, toggleSubtask, deleteSubtask,
   reorderTask,
 }) {
-  const sensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
-  );
-  const [activeDragId, setActiveDragId] = useState(null);
+  // Custom touch drag-to-reorder (native, no library)
+  const [dragId, setDragId] = useState(null);
+  const [dropIdx, setDropIdx] = useState(null);
+  const rowRefs = useRef({});
+  const dragIdRef = useRef(null);         // ref mirrors dragId for use inside handlers
+  const dropIdxRef = useRef(null);        // ref mirrors dropIdx for use inside touchend
+  const dragPendingRef = useRef([]);      // snapshot of pending list at drag start
+
+  const getDropIdx = useCallback((clientY) => {
+    let best = 0, bestDist = Infinity;
+    dragPendingRef.current.forEach((item, idx) => {
+      const el = rowRefs.current[item.id];
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const mid = rect.top + rect.height / 2;
+      const dist = Math.abs(clientY - mid);
+      if (dist < bestDist) { bestDist = dist; best = idx; }
+    });
+    return best;
+  }, []);
+
+  // Mouse drag (desktop)
+  const onHandleMouseDown = useCallback((id, pending) => (e) => {
+    e.preventDefault();
+    dragPendingRef.current = pending;
+    dragIdRef.current = id;
+    const origIdx = pending.findIndex(t => t.id === id);
+    dropIdxRef.current = origIdx;
+    setDragId(id); setDropIdx(origIdx);
+    const onMove = (me) => {
+      const ni = getDropIdx(me.clientY);
+      dropIdxRef.current = ni;
+      setDropIdx(ni);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      const oIdx = dragPendingRef.current.findIndex(t => t.id === dragIdRef.current);
+      const nIdx = dropIdxRef.current;
+      if (nIdx !== null && nIdx !== oIdx) reorderTask(oIdx, nIdx);
+      dragIdRef.current = null; dropIdxRef.current = null;
+      setDragId(null); setDropIdx(null);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [getDropIdx, reorderTask]);
+
+  // Touch drag (mobile) — handlers go on the handle element itself:
+  // touch events always fire on the element where touchstart occurred,
+  // so no matter where the finger moves, these handlers receive all events.
+  const onHandleTouchStart = useCallback((id, pending) => (e) => {
+    e.preventDefault();                    // prevent scroll while dragging from handle
+    dragPendingRef.current = pending;
+    dragIdRef.current = id;
+    const origIdx = pending.findIndex(t => t.id === id);
+    dropIdxRef.current = origIdx;
+    setDragId(id); setDropIdx(origIdx);
+    if (navigator.vibrate) navigator.vibrate(20);
+  }, []);
+
+  // onHandleTouchMove is stable (no state deps) — reads refs directly
+  const onHandleTouchMove = useCallback((e) => {
+    if (!dragIdRef.current) return;
+    e.preventDefault();
+    const ni = getDropIdx(e.touches[0].clientY);
+    dropIdxRef.current = ni;
+    setDropIdx(ni);
+  }, [getDropIdx]);
+
+  const onHandleTouchEnd = useCallback(() => {
+    if (!dragIdRef.current) return;
+    const oIdx = dragPendingRef.current.findIndex(t => t.id === dragIdRef.current);
+    const nIdx = dropIdxRef.current;
+    if (nIdx !== null && nIdx !== oIdx) reorderTask(oIdx, nIdx);
+    dragIdRef.current = null; dropIdxRef.current = null;
+    setDragId(null); setDropIdx(null);
+  }, [reorderTask]);
 
   const renderTaskRow = (item, dragHandle = null) => {
     const prioColor = item.priority?PRIO_COLOR[item.priority]:null;
@@ -229,43 +282,37 @@ export default function TabContent({
 
           {allPendingTasks.length===0&&<div className="empty-state">אין משימות פתוחות</div>}
 
-          {/* First group (current tab/subtab tasks) — draggable list */}
+          {/* First group — native touch drag-to-reorder */}
           {(()=>{
             const pending = taskGroups[0].tasks.filter(t=>!t.done);
             if (!pending.length) return null;
-            const activeTask = activeDragId ? pending.find(t=>t.id===activeDragId) : null;
             return (
-              <DndContext
-                sensors={sensors}
-                collisionDetection={closestCenter}
-                onDragStart={({active})=>setActiveDragId(active.id)}
-                onDragEnd={({active,over})=>{
-                  setActiveDragId(null);
-                  if(!over||active.id===over.id)return;
-                  const oldIdx=pending.findIndex(t=>t.id===active.id);
-                  const newIdx=pending.findIndex(t=>t.id===over.id);
-                  if(oldIdx!==-1&&newIdx!==-1)reorderTask(oldIdx,newIdx);
-                }}
-                onDragCancel={()=>setActiveDragId(null)}
-              >
-                <SortableContext items={pending.map(t=>t.id)} strategy={verticalListSortingStrategy}>
-                  <div className="task-group-wrap">
-                    {pending.map(item=>(
-                      <SortableItem key={item.id} id={item.id}>
-                        {({dragHandle})=>renderTaskRow(item,dragHandle)}
-                      </SortableItem>
-                    ))}
-                  </div>
-                </SortableContext>
-                {/* DragOverlay renders outside overflow:hidden so the ghost is never clipped */}
-                <DragOverlay dropAnimation={null}>
-                  {activeTask?(
-                    <div style={{background:"white",borderRadius:10,boxShadow:"0 8px 28px rgba(0,0,0,0.18)",opacity:0.96}}>
-                      {renderTaskRow(activeTask,<div style={{cursor:"grabbing",color:"#ccc",fontSize:22,padding:"4px 8px",display:"flex",alignItems:"center",minWidth:36,minHeight:44,justifyContent:"center"}}>⠿</div>)}
+              <div className="task-group-wrap">
+                {pending.map((item, idx) => {
+                  const isDragging = item.id === dragId;
+                  const isDropHere = dragId && !isDragging && dropIdx === idx;
+                  const handle = (
+                    <div
+                      onMouseDown={onHandleMouseDown(item.id, pending)}
+                      onTouchStart={onHandleTouchStart(item.id, pending)}
+                      onTouchMove={onHandleTouchMove}
+                      onTouchEnd={onHandleTouchEnd}
+                      onTouchCancel={onHandleTouchEnd}
+                      style={{ cursor: isDragging ? "grabbing" : "grab", color: "#ccc", fontSize: 22, padding: "4px 8px", touchAction: "none", userSelect: "none", WebkitUserSelect: "none", lineHeight: 1, flexShrink: 0, display: "flex", alignItems: "center", minWidth: 36, minHeight: 44, justifyContent: "center" }}
+                      aria-label="גרור">⠿</div>
+                  );
+                  return (
+                    <div key={item.id} ref={el => { rowRefs.current[item.id] = el; }}
+                      style={{ opacity: isDragging ? 0.35 : 1, transition: "opacity 0.1s", borderTop: isDropHere ? `2px solid ${accent}` : undefined }}>
+                      {renderTaskRow(item, handle)}
                     </div>
-                  ):null}
-                </DragOverlay>
-              </DndContext>
+                  );
+                })}
+                {/* Drop indicator at the end */}
+                {dragId && dropIdx === pending.length - 1 && pending[dropIdx]?.id !== dragId && (
+                  <div style={{ height: 2, background: accent, margin: "0 16px" }} />
+                )}
+              </div>
             );
           })()}
 
