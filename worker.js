@@ -400,7 +400,7 @@ ${taskList}
         const geocode = async (addr) => {
           if (!addr) return null;
           try {
-            const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(addr)}&format=json&limit=1&countrycodes=il`, { headers:{"User-Agent":UA} });
+            const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(addr)}&format=json&limit=1`, { headers:{"User-Agent":UA} });
             const d = await r.json();
             if (d[0]) return { lat: d[0].lat, lon: d[0].lon };
           } catch {}
