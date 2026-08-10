@@ -27,8 +27,9 @@ import { usePushNotifications } from "./hooks/usePushNotifications";
 import {
   uid, STORAGE_KEY, WORKER_URL, PRIO_CYCLE, TAB_COLORS, DEFAULT_GMAIL_CLIENT_ID,
   today, getReminderStatus, loadStorage, computeInitialAlerts, buildGmailSearchQueries, fetchWithTimeout,
-  pruneEmailSummariesForQuota,
+  pruneEmailSummariesForQuota, computeDailySchedule,
 } from "./utils";
+import DailyScheduleOverlay from "./components/DailyScheduleOverlay";
 
 // True when the app is running as an installed/home-screen PWA (standalone
 // display mode) rather than a normal browser tab. Needed because the
@@ -153,6 +154,11 @@ export default function App() {
   const [parsingList,setParsingList] = useState(false);
   const [editingShoppingItem,setEditingShoppingItem] = useState(null);
   const [showBoughtItems,setShowBoughtItems] = useState(false);
+
+  // ── Daily schedule (לו"ז יומי) ───────────────────────────────────────────────
+  const [showDailySchedule,setShowDailySchedule] = useState(false);
+  const [dailyScheduleInput,setDailyScheduleInput] = useState("");
+  const [dailyScheduleTimeInput,setDailyScheduleTimeInput] = useState("");
 
   // ── Projects ──────────────────────────────────────────────────────────────
   const [showProjects,setShowProjects] = useState(false);
@@ -549,6 +555,40 @@ export default function App() {
     if(!window.confirm(`למחוק את הפתק "${note?.name}"? התוכן שלו יימחק לצמיתות.`))return;
     updateProfile(p=>({...p,notes:(p.notes||[]).filter(n=>n.id!==nid)})); if(openListId===nid){setOpenListId(null);setOpenListType(null);}
   };
+
+  // ── Daily schedule (לו"ז יומי) ───────────────────────────────────────────────
+  // Scoped to "today" only (by design — this is a same-day planning tool, not
+  // a calendar), keyed by date string so yesterday's plan doesn't bleed into
+  // today's. Old dates are pruned (kept 14 days back, for anyone who wants to
+  // glance at "what did I plan yesterday") whenever a write happens, so this
+  // doesn't grow unbounded the way email_summaries did before that got fixed.
+  const todayKey = today();
+  const dailyScheduleSettings = getProfile().dailyScheduleSettings || { dayStart:"08:00", dayEnd:"21:00" };
+  const dailyScheduleItems = (getProfile().dailySchedule || {})[todayKey] || [];
+  const pruneOldScheduleDates = (schedule) => {
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate()-14);
+    const cutoffKey = cutoff.toISOString().split("T")[0];
+    return Object.fromEntries(Object.entries(schedule||{}).filter(([k])=>k>=cutoffKey || k===todayKey));
+  };
+  const addDailyScheduleItem = (text, fixedTime) => {
+    if (!text.trim()) return;
+    updateProfile(p=>{
+      const schedule = pruneOldScheduleDates(p.dailySchedule);
+      const dayItems = schedule[todayKey]||[];
+      const item = { id:uid(), text:text.trim(), fixedTime:fixedTime||null, durationMin:30, done:false, createdAt:Date.now() };
+      return { ...p, dailySchedule: { ...schedule, [todayKey]: [...dayItems, item] } };
+    });
+  };
+  const toggleDailyScheduleItem = (id) => updateProfile(p=>({...p, dailySchedule:{...(p.dailySchedule||{}), [todayKey]:((p.dailySchedule||{})[todayKey]||[]).map(i=>i.id===id?{...i,done:!i.done}:i)}}));
+  const deleteDailyScheduleItem = (id) => updateProfile(p=>({...p, dailySchedule:{...(p.dailySchedule||{}), [todayKey]:((p.dailySchedule||{})[todayKey]||[]).filter(i=>i.id!==id)}}));
+  const setDailyScheduleItemTime = (id, fixedTime) => updateProfile(p=>({...p, dailySchedule:{...(p.dailySchedule||{}), [todayKey]:((p.dailySchedule||{})[todayKey]||[]).map(i=>i.id===id?{...i,fixedTime:fixedTime||null}:i)}}));
+  const saveDailyScheduleSettings = (settings) => updateProfile(p=>({...p, dailyScheduleSettings:settings}));
+  const nowMinForToday = () => { const n=new Date(); return n.getHours()*60+n.getMinutes(); };
+  const dailySchedulePlan = useMemo(
+    ()=>computeDailySchedule(dailyScheduleItems, { dayStart:dailyScheduleSettings.dayStart, dayEnd:dailyScheduleSettings.dayEnd, nowMin:nowMinForToday() }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dailyScheduleItems, dailyScheduleSettings.dayStart, dailyScheduleSettings.dayEnd]
+  );
 
   // ── Projects ──────────────────────────────────────────────────────────────
   const projects = getProfile().projects||[];
@@ -2219,6 +2259,19 @@ export default function App() {
           />
         )}
 
+        {/* Daily schedule overlay (לו"ז יומי) */}
+        {showDailySchedule&&(
+          <DailyScheduleOverlay
+            accent={accent}
+            setShowDailySchedule={setShowDailySchedule}
+            items={dailyScheduleItems} plan={dailySchedulePlan} settings={dailyScheduleSettings}
+            addItem={addDailyScheduleItem} toggleItem={toggleDailyScheduleItem} deleteItem={deleteDailyScheduleItem} setItemTime={setDailyScheduleItemTime}
+            saveSettings={saveDailyScheduleSettings}
+            textInput={dailyScheduleInput} setTextInput={setDailyScheduleInput}
+            timeInput={dailyScheduleTimeInput} setTimeInput={setDailyScheduleTimeInput}
+          />
+        )}
+
         {/* Email overlay — home page (rule management + connect) */}
         {showEmail&&(
           <EmailOverlay
@@ -2362,6 +2415,7 @@ export default function App() {
           showListsMenu={showListsMenu} setShowListsMenu={setShowListsMenu}
           showProjects={showProjects} openProjectId={openProjectId} setShowProjects={setShowProjects} setOpenProjectId={setOpenProjectId}
           showEmail={showEmail} setShowEmail={setShowEmail}
+          showDailySchedule={showDailySchedule} setShowDailySchedule={setShowDailySchedule}
           setShowQuickCapture={setShowQuickCapture}
         />
 

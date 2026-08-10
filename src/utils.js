@@ -55,6 +55,54 @@ export const getDaysUntil = (s) => {
   const now=new Date(); now.setHours(0,0,0,0);
   return Math.round((new Date(s+"T00:00:00")-now)/86400000);
 };
+// ── Daily schedule (לו"ז יומי) ───────────────────────────────────────────────
+// Turns a flat list of today's tasks — some pinned to a fixed clock time
+// (e.g. "pick up the kids" at 15:30), most not — into a single timeline:
+// fixed items keep their exact slot, flexible items get packed in around
+// them (and around "now", if that's later than the day's start) in the
+// order they were entered. Items that don't fit before the day's end land
+// in `overflow` instead of silently disappearing or overlapping something.
+const hhmmToMin = (hhmm) => {
+  const [h, m] = String(hhmm || "00:00").split(":").map(Number);
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+};
+export const minToHHMM = (min) => {
+  const wrapped = ((Math.round(min) % 1440) + 1440) % 1440;
+  const h = Math.floor(wrapped / 60), m = wrapped % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+};
+export const computeDailySchedule = (items, { dayStart = "08:00", dayEnd = "21:00", nowMin = null } = {}) => {
+  const dayStartMin = hhmmToMin(dayStart);
+  const dayEndMin = hhmmToMin(dayEnd);
+  const pending = (items || []).filter(i => !i.done);
+  const done = (items || []).filter(i => i.done);
+
+  const fixed = pending
+    .filter(i => i.fixedTime)
+    .map(i => { const start = hhmmToMin(i.fixedTime); const dur = i.durationMin || 30; return { ...i, start, end: start + dur, isFixed: true }; })
+    .sort((a, b) => a.start - b.start);
+
+  const blockedBy = (start, end) => fixed.filter(f => start < f.end && end > f.start).sort((a, b) => a.end - b.end)[0];
+
+  let cursor = Math.ceil(Math.max(dayStartMin, nowMin != null ? nowMin : dayStartMin) / 5) * 5;
+  const scheduledFlexible = [];
+  const overflow = [];
+  for (const item of pending.filter(i => !i.fixedTime)) {
+    const dur = item.durationMin || 30;
+    let start = cursor, guard = 0, blocker;
+    // Keep hopping to the end of whatever fixed block we'd land inside —
+    // bounded by `guard` so a pathological input can't loop forever.
+    while ((blocker = blockedBy(start, start + dur)) && guard < 50) { start = blocker.end; guard++; }
+    const end = start + dur;
+    if (end > dayEndMin) { overflow.push(item); continue; }
+    scheduledFlexible.push({ ...item, start, end, isFixed: false });
+    cursor = end;
+  }
+
+  const scheduled = [...fixed, ...scheduledFlexible].sort((a, b) => a.start - b.start);
+  return { scheduled, overflow, done };
+};
+
 export const loadStorage = () => { try{return JSON.parse(localStorage.getItem(STORAGE_KEY))||{};}catch{return{};} };
 
 // Reminders whose alertDate has arrived, computed once from storage (used for lazy state init on mount)

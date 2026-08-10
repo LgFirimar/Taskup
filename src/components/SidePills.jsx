@@ -5,10 +5,12 @@ export default function SidePills({
   showListsMenu, setShowListsMenu,
   showProjects, openProjectId, setShowProjects, setOpenProjectId,
   showEmail, setShowEmail,
+  showDailySchedule, setShowDailySchedule,
   setShowQuickCapture,
 }) {
   return (<>
     {[
+      {key:"schedule", icon:"🗓️", label:"לו\"ז יומי", bottom:260, active:showDailySchedule,               fn:()=>setShowDailySchedule(true)},
       {key:"shopping", icon:"🛒", label:"קניות",     bottom:216, active:showListsMenu==="shopping",        fn:()=>setShowListsMenu(showListsMenu==="shopping"?null:"shopping")},
       {key:"notes",    icon:"📝", label:"פתקים",     bottom:172, active:showListsMenu==="notes",           fn:()=>setShowListsMenu(showListsMenu==="notes"?null:"notes")},
       {key:"projects", icon:"🗂", label:"פרויקטים", bottom:128, active:!!(showProjects||openProjectId),   fn:()=>{setShowProjects(true);setOpenProjectId(null);}},
