@@ -24,16 +24,18 @@ export default function TabContent({
   expandedTaskId, setExpandedTaskId, subtaskInput, setSubtaskInput, addSubtask, toggleSubtask, deleteSubtask,
   reorderTask,
 }) {
-  // Pointer-event drag-to-reorder — works on mouse + touch, no passive-listener issues.
-  // setPointerCapture routes all subsequent pointermove/up to the handle element.
+  // Drag-to-reorder: DOM addEventListener with {passive:false} bypasses React's
+  // passive touch listeners so preventDefault() actually stops page scroll.
   const [dragId, setDragId] = useState(null);
   const [dropIdx, setDropIdx] = useState(null);
   const rowRefs = useRef({});
   const dragIdRef = useRef(null);
   const dropIdxRef = useRef(null);
-  const dragPendingRef = useRef([]);
+  const dragPendingRef = useRef([]);  // written each render in the task-list IIFE
+  const reorderTaskRef = useRef(reorderTask);
+  reorderTaskRef.current = reorderTask;
 
-  const getDropIdx = useCallback((clientY) => {
+  const getDropIdx = (clientY) => {
     let best = 0, bestDist = Infinity;
     dragPendingRef.current.forEach((item, idx) => {
       const el = rowRefs.current[item.id];
@@ -44,35 +46,73 @@ export default function TabContent({
       if (dist < bestDist) { bestDist = dist; best = idx; }
     });
     return best;
-  }, []);
+  };
 
-  const onHandlePointerDown = useCallback((id, pending) => (e) => {
-    if (e.button && e.button !== 0) return;
+  // Mouse drag — React onMouseDown is never passive, document listeners for move/up
+  const onMouseDragStart = useCallback((id) => (e) => {
+    if (e.button !== 0) return;
     e.preventDefault();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    dragPendingRef.current = pending;
     dragIdRef.current = id;
-    const origIdx = pending.findIndex(t => t.id === id);
+    const origIdx = dragPendingRef.current.findIndex(t => t.id === id);
     dropIdxRef.current = origIdx;
     setDragId(id); setDropIdx(origIdx);
-    if (navigator.vibrate) navigator.vibrate(20);
-  }, []);
+    const onMove = (me) => { const ni = getDropIdx(me.clientY); dropIdxRef.current = ni; setDropIdx(ni); };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      const oIdx = dragPendingRef.current.findIndex(t => t.id === dragIdRef.current);
+      const nIdx = dropIdxRef.current;
+      if (nIdx !== null && nIdx !== oIdx) reorderTaskRef.current(oIdx, nIdx);
+      dragIdRef.current = null; dropIdxRef.current = null;
+      setDragId(null); setDropIdx(null);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, []); // stable — all values via refs
 
-  const onHandlePointerMove = useCallback((e) => {
-    if (!dragIdRef.current) return;
-    const ni = getDropIdx(e.clientY);
-    dropIdxRef.current = ni;
-    setDropIdx(ni);
-  }, [getDropIdx]);
-
-  const onHandlePointerUp = useCallback(() => {
-    if (!dragIdRef.current) return;
-    const oIdx = dragPendingRef.current.findIndex(t => t.id === dragIdRef.current);
-    const nIdx = dropIdxRef.current;
-    if (nIdx !== null && nIdx !== oIdx) reorderTask(oIdx, nIdx);
-    dragIdRef.current = null; dropIdxRef.current = null;
-    setDragId(null); setDropIdx(null);
-  }, [reorderTask]);
+  // Touch drag — callback ref attaches {passive:false} listeners directly to DOM
+  const touchHandlersRef = useRef(null);
+  const containerRefCallback = useCallback((el) => {
+    if (touchHandlersRef.current) {
+      const { node, onStart, onMove, onEnd } = touchHandlersRef.current;
+      node.removeEventListener('touchstart', onStart);
+      node.removeEventListener('touchmove', onMove);
+      node.removeEventListener('touchend', onEnd);
+      node.removeEventListener('touchcancel', onEnd);
+      touchHandlersRef.current = null;
+    }
+    if (!el) return;
+    const onStart = (e) => {
+      const h = e.target.closest('[data-drag-handle]');
+      if (!h) return;
+      e.preventDefault();
+      const id = h.dataset.itemId;
+      dragIdRef.current = id;
+      const origIdx = dragPendingRef.current.findIndex(t => t.id === id);
+      dropIdxRef.current = origIdx;
+      setDragId(id); setDropIdx(origIdx);
+      if (navigator.vibrate) navigator.vibrate(20);
+    };
+    const onMove = (e) => {
+      if (!dragIdRef.current) return;
+      e.preventDefault();
+      const ni = getDropIdx(e.touches[0].clientY);
+      dropIdxRef.current = ni; setDropIdx(ni);
+    };
+    const onEnd = () => {
+      if (!dragIdRef.current) return;
+      const oIdx = dragPendingRef.current.findIndex(t => t.id === dragIdRef.current);
+      const nIdx = dropIdxRef.current;
+      if (nIdx !== null && nIdx !== oIdx) reorderTaskRef.current(oIdx, nIdx);
+      dragIdRef.current = null; dropIdxRef.current = null;
+      setDragId(null); setDropIdx(null);
+    };
+    el.addEventListener('touchstart', onStart, { passive: false });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd);
+    el.addEventListener('touchcancel', onEnd);
+    touchHandlersRef.current = { node: el, onStart, onMove, onEnd };
+  }, []); // stable — all values via refs
 
   const renderTaskRow = (item, dragHandle = null) => {
     const prioColor = item.priority?PRIO_COLOR[item.priority]:null;
@@ -257,18 +297,18 @@ export default function TabContent({
           {/* First group — native touch drag-to-reorder */}
           {(()=>{
             const pending = taskGroups[0].tasks.filter(t=>!t.done);
+            dragPendingRef.current = pending; // keep ref current for DOM handlers
             if (!pending.length) return null;
             return (
-              <div className="task-group-wrap">
+              <div className="task-group-wrap" ref={containerRefCallback}>
                 {pending.map((item, idx) => {
                   const isDragging = item.id === dragId;
                   const isDropHere = dragId && !isDragging && dropIdx === idx;
                   const handle = (
                     <div
-                      onPointerDown={onHandlePointerDown(item.id, pending)}
-                      onPointerMove={onHandlePointerMove}
-                      onPointerUp={onHandlePointerUp}
-                      onPointerCancel={onHandlePointerUp}
+                      data-drag-handle
+                      data-item-id={item.id}
+                      onMouseDown={onMouseDragStart(item.id)}
                       style={{ cursor: isDragging ? "grabbing" : "grab", color: "#ccc", fontSize: 22, padding: "4px 8px", touchAction: "none", userSelect: "none", WebkitUserSelect: "none", lineHeight: 1, flexShrink: 0, display: "flex", alignItems: "center", minWidth: 36, minHeight: 44, justifyContent: "center" }}
                       aria-label="גרור">⠿</div>
                   );
