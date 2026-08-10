@@ -6,7 +6,7 @@ import { PRIO_COLOR, formatDate, getReminderStatus, getDaysUntil } from "../util
 function SortableItem({ id, children }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });
   return (
-    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1, touchAction: "none" }}>
+    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1 }}>
       {children({
         dragHandle: (
           <button ref={setActivatorNodeRef} {...listeners} {...attributes} tabIndex={-1}
@@ -226,19 +226,8 @@ export default function TabContent({
 
           {allPendingTasks.length===0&&<div className="empty-state">אין משימות פתוחות</div>}
 
-          {/* Aggregate: group by source (no drag) */}
-          {isAggregate ? (
-            taskGroups.map((group,gi)=>{
-              const pending=group.tasks.filter(t=>!t.done);
-              if(!pending.length&&group.label) return null;
-              return (
-                <div key={gi}>
-                  {group.label&&<div className="group-label">{group.label}</div>}
-                  {pending.length>0&&<div className="task-group-wrap">{pending.map(item=>renderTaskRow(item))}</div>}
-                </div>
-              );
-            })
-          ) : (() => {
+          {/* First group (current tab/subtab tasks) always gets drag handles */}
+          {(() => {
             const pending = taskGroups[0].tasks.filter(t=>!t.done);
             if (!pending.length) return null;
             const handleDragEnd = ({ active, over }) => {
@@ -261,6 +250,18 @@ export default function TabContent({
               </DndContext>
             );
           })()}
+
+          {/* In aggregate view, also render subtab groups below (no drag — different reorder context) */}
+          {isAggregate&&taskGroups.slice(1).map((group,gi)=>{
+            const pending=group.tasks.filter(t=>!t.done);
+            if(!pending.length&&group.label) return null;
+            return (
+              <div key={gi+1}>
+                {group.label&&<div className="group-label">{group.label}</div>}
+                {pending.length>0&&<div className="task-group-wrap">{pending.map(item=>renderTaskRow(item))}</div>}
+              </div>
+            );
+          })}
 
           {allDoneTasks.length>0&&<>
             <button className="section-label" onClick={()=>setShowDoneTasks(p=>!p)} style={{background:"none",border:"none",padding:0,width:"100%",display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontFamily:"'Heebo',sans-serif"}}>
