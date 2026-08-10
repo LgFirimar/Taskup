@@ -31,6 +31,100 @@ export default function DailyScheduleOverlay({
   const hasItems = items.length > 0;
   const todayLabel = new Date().toLocaleDateString("he-IL", { weekday: "long", day: "numeric", month: "long" });
 
+  // Drag-to-reorder (same DOM-listener pattern to bypass React passive events)
+  const [dragId, setDragId] = useState(null);
+  const [dropIdx, setDropIdx] = useState(null);
+  const rowRefs = useRef({});
+  const dragIdRef = useRef(null);
+  const dropIdxRef = useRef(null);
+  const dragPendingRef = useRef([]);
+  const reorderFnRef = useRef(null);
+
+  const reorderScheduled = useCallback((fromIdx, toIdx) => {
+    const list = [...dragPendingRef.current];
+    const [moved] = list.splice(fromIdx, 1);
+    list.splice(toIdx, 0, moved);
+    replaceItems(list);
+  }, [replaceItems]);
+  reorderFnRef.current = reorderScheduled;
+
+  const getDropIdx = (clientY) => {
+    let best = 0, bestDist = Infinity;
+    dragPendingRef.current.forEach((item, idx) => {
+      const el = rowRefs.current[item.id];
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const mid = rect.top + rect.height / 2;
+      const dist = Math.abs(clientY - mid);
+      if (dist < bestDist) { bestDist = dist; best = idx; }
+    });
+    return best;
+  };
+
+  const onMouseDragStart = useCallback((id) => (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    dragIdRef.current = id;
+    const origIdx = dragPendingRef.current.findIndex(t => t.id === id);
+    dropIdxRef.current = origIdx;
+    setDragId(id); setDropIdx(origIdx);
+    const onMove = (me) => { const ni = getDropIdx(me.clientY); dropIdxRef.current = ni; setDropIdx(ni); };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      const oIdx = dragPendingRef.current.findIndex(t => t.id === dragIdRef.current);
+      const nIdx = dropIdxRef.current;
+      if (nIdx !== null && nIdx !== oIdx) reorderFnRef.current(oIdx, nIdx);
+      dragIdRef.current = null; dropIdxRef.current = null;
+      setDragId(null); setDropIdx(null);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, []);
+
+  const touchHandlersRef = useRef(null);
+  const scheduleContainerRef = useCallback((el) => {
+    if (touchHandlersRef.current) {
+      const { node, onStart, onMove, onEnd } = touchHandlersRef.current;
+      node.removeEventListener('touchstart', onStart);
+      node.removeEventListener('touchmove', onMove);
+      node.removeEventListener('touchend', onEnd);
+      node.removeEventListener('touchcancel', onEnd);
+      touchHandlersRef.current = null;
+    }
+    if (!el) return;
+    const onStart = (e) => {
+      const h = e.target.closest('[data-drag-handle]');
+      if (!h) return;
+      e.preventDefault();
+      const id = h.dataset.itemId;
+      dragIdRef.current = id;
+      const origIdx = dragPendingRef.current.findIndex(t => t.id === id);
+      dropIdxRef.current = origIdx;
+      setDragId(id); setDropIdx(origIdx);
+      if (navigator.vibrate) navigator.vibrate(20);
+    };
+    const onMove = (e) => {
+      if (!dragIdRef.current) return;
+      e.preventDefault();
+      const ni = getDropIdx(e.touches[0].clientY);
+      dropIdxRef.current = ni; setDropIdx(ni);
+    };
+    const onEnd = () => {
+      if (!dragIdRef.current) return;
+      const oIdx = dragPendingRef.current.findIndex(t => t.id === dragIdRef.current);
+      const nIdx = dropIdxRef.current;
+      if (nIdx !== null && nIdx !== oIdx) reorderFnRef.current(oIdx, nIdx);
+      dragIdRef.current = null; dropIdxRef.current = null;
+      setDragId(null); setDropIdx(null);
+    };
+    el.addEventListener('touchstart', onStart, { passive: false });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd);
+    el.addEventListener('touchcancel', onEnd);
+    touchHandlersRef.current = { node: el, onStart, onMove, onEnd };
+  }, []);
+
   const callScheduleApi = async (texts) => {
     const res = await fetch(`${WORKER_URL}/schedule`, {
       method: "POST",
@@ -119,7 +213,7 @@ export default function DailyScheduleOverlay({
 
   const pendingCount = plan.scheduled.filter(i => !i.done).length;
 
-  const renderItem = (item, dimmed = false) => {
+  const renderItem = (item, dimmed = false, dragHandle = null) => {
     const isEditing = editingId === item.id;
     return (
       <div key={item.id} style={{ padding: "10px 0", borderBottom: "1px solid #f5f5f4" }}>
@@ -141,6 +235,7 @@ export default function DailyScheduleOverlay({
           </div>
         ) : (
           <div style={{ display: "flex", alignItems: "flex-start", gap: 10, opacity: dimmed ? 0.5 : 1 }}>
+            {dragHandle}
             <button onClick={() => toggleItem(item.id)} aria-label={`סמני "${item.text}" כבוצע`}
               style={{ width: 20, height: 20, minWidth: 20, marginTop: 2, borderRadius: "50%", border: `1.5px solid ${PEACH}`, background: dimmed ? PEACH : "none", padding: 0, cursor: "pointer", flexShrink: 0 }} />
             <div style={{ flex: 1 }}>
@@ -275,8 +370,32 @@ export default function DailyScheduleOverlay({
               </div>
             )}
 
-            {/* Scheduled items */}
-            {plan.scheduled.map(item => renderItem(item, false))}
+            {/* Scheduled items — draggable */}
+            {(() => {
+              dragPendingRef.current = plan.scheduled;
+              return (
+                <div ref={scheduleContainerRef}>
+                  {plan.scheduled.map((item, idx) => {
+                    const isDragging = item.id === dragId;
+                    const isDropHere = dragId && !isDragging && dropIdx === idx;
+                    const handle = (
+                      <div
+                        data-drag-handle
+                        data-item-id={item.id}
+                        onMouseDown={onMouseDragStart(item.id)}
+                        style={{ cursor: isDragging ? "grabbing" : "grab", color: "#ccc", fontSize: 20, padding: "2px 4px", touchAction: "none", userSelect: "none", WebkitUserSelect: "none", lineHeight: 1, flexShrink: 0, display: "flex", alignItems: "center", minWidth: 28, minHeight: 44, justifyContent: "center" }}
+                        aria-label="גרור">⠿</div>
+                    );
+                    return (
+                      <div key={item.id} ref={el => { rowRefs.current[item.id] = el; }}
+                        style={{ opacity: isDragging ? 0.35 : 1, transition: "opacity 0.1s", borderTop: isDropHere ? `2px solid ${PEACH}` : undefined }}>
+                        {renderItem(item, false, handle)}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             {/* Overflow */}
             {plan.overflow.length > 0 && (
