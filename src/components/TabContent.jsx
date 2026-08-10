@@ -6,12 +6,12 @@ import { PRIO_COLOR, formatDate, getReminderStatus, getDaysUntil } from "../util
 function SortableItem({ id, children }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });
   return (
-    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1 }}>
+    <div ref={setNodeRef} {...attributes} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1 }}>
       {children({
         dragHandle: (
-          <div ref={setActivatorNodeRef} {...listeners} {...attributes} role="button" tabIndex={-1}
-            style={{ cursor:"grab", color:"#bbb", fontSize:20, padding:"4px 8px", touchAction:"none", userSelect:"none", WebkitUserSelect:"none", lineHeight:1, flexShrink:0, display:"flex", alignItems:"center", minWidth:36, minHeight:36, justifyContent:"center" }}
-            aria-label="גרור לשינוי סדר">⠿</div>
+          <div ref={setActivatorNodeRef} {...listeners}
+            style={{ cursor:"grab", color:"#bbb", fontSize:20, padding:"4px 8px", touchAction:"none", userSelect:"none", WebkitUserSelect:"none", lineHeight:1, flexShrink:0, display:"flex", alignItems:"center", minWidth:36, minHeight:44, justifyContent:"center" }}
+            aria-label="גרור">⠿</div>
         ),
       })}
     </div>
