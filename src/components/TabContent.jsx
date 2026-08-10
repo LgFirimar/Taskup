@@ -24,13 +24,14 @@ export default function TabContent({
   expandedTaskId, setExpandedTaskId, subtaskInput, setSubtaskInput, addSubtask, toggleSubtask, deleteSubtask,
   reorderTask,
 }) {
-  // Custom touch drag-to-reorder (native, no library)
+  // Pointer-event drag-to-reorder — works on mouse + touch, no passive-listener issues.
+  // setPointerCapture routes all subsequent pointermove/up to the handle element.
   const [dragId, setDragId] = useState(null);
   const [dropIdx, setDropIdx] = useState(null);
   const rowRefs = useRef({});
-  const dragIdRef = useRef(null);         // ref mirrors dragId for use inside handlers
-  const dropIdxRef = useRef(null);        // ref mirrors dropIdx for use inside touchend
-  const dragPendingRef = useRef([]);      // snapshot of pending list at drag start
+  const dragIdRef = useRef(null);
+  const dropIdxRef = useRef(null);
+  const dragPendingRef = useRef([]);
 
   const getDropIdx = useCallback((clientY) => {
     let best = 0, bestDist = Infinity;
@@ -45,37 +46,10 @@ export default function TabContent({
     return best;
   }, []);
 
-  // Mouse drag (desktop)
-  const onHandleMouseDown = useCallback((id, pending) => (e) => {
+  const onHandlePointerDown = useCallback((id, pending) => (e) => {
+    if (e.button && e.button !== 0) return;
     e.preventDefault();
-    dragPendingRef.current = pending;
-    dragIdRef.current = id;
-    const origIdx = pending.findIndex(t => t.id === id);
-    dropIdxRef.current = origIdx;
-    setDragId(id); setDropIdx(origIdx);
-    const onMove = (me) => {
-      const ni = getDropIdx(me.clientY);
-      dropIdxRef.current = ni;
-      setDropIdx(ni);
-    };
-    const onUp = () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      const oIdx = dragPendingRef.current.findIndex(t => t.id === dragIdRef.current);
-      const nIdx = dropIdxRef.current;
-      if (nIdx !== null && nIdx !== oIdx) reorderTask(oIdx, nIdx);
-      dragIdRef.current = null; dropIdxRef.current = null;
-      setDragId(null); setDropIdx(null);
-    };
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  }, [getDropIdx, reorderTask]);
-
-  // Touch drag (mobile) — handlers go on the handle element itself:
-  // touch events always fire on the element where touchstart occurred,
-  // so no matter where the finger moves, these handlers receive all events.
-  const onHandleTouchStart = useCallback((id, pending) => (e) => {
-    e.preventDefault();                    // prevent scroll while dragging from handle
+    e.currentTarget.setPointerCapture(e.pointerId);
     dragPendingRef.current = pending;
     dragIdRef.current = id;
     const origIdx = pending.findIndex(t => t.id === id);
@@ -84,16 +58,14 @@ export default function TabContent({
     if (navigator.vibrate) navigator.vibrate(20);
   }, []);
 
-  // onHandleTouchMove is stable (no state deps) — reads refs directly
-  const onHandleTouchMove = useCallback((e) => {
+  const onHandlePointerMove = useCallback((e) => {
     if (!dragIdRef.current) return;
-    e.preventDefault();
-    const ni = getDropIdx(e.touches[0].clientY);
+    const ni = getDropIdx(e.clientY);
     dropIdxRef.current = ni;
     setDropIdx(ni);
   }, [getDropIdx]);
 
-  const onHandleTouchEnd = useCallback(() => {
+  const onHandlePointerUp = useCallback(() => {
     if (!dragIdRef.current) return;
     const oIdx = dragPendingRef.current.findIndex(t => t.id === dragIdRef.current);
     const nIdx = dropIdxRef.current;
@@ -293,11 +265,10 @@ export default function TabContent({
                   const isDropHere = dragId && !isDragging && dropIdx === idx;
                   const handle = (
                     <div
-                      onMouseDown={onHandleMouseDown(item.id, pending)}
-                      onTouchStart={onHandleTouchStart(item.id, pending)}
-                      onTouchMove={onHandleTouchMove}
-                      onTouchEnd={onHandleTouchEnd}
-                      onTouchCancel={onHandleTouchEnd}
+                      onPointerDown={onHandlePointerDown(item.id, pending)}
+                      onPointerMove={onHandlePointerMove}
+                      onPointerUp={onHandlePointerUp}
+                      onPointerCancel={onHandlePointerUp}
                       style={{ cursor: isDragging ? "grabbing" : "grab", color: "#ccc", fontSize: 22, padding: "4px 8px", touchAction: "none", userSelect: "none", WebkitUserSelect: "none", lineHeight: 1, flexShrink: 0, display: "flex", alignItems: "center", minWidth: 36, minHeight: 44, justifyContent: "center" }}
                       aria-label="גרור">⠿</div>
                   );
