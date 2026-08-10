@@ -4,13 +4,13 @@ import { CSS } from "@dnd-kit/utilities";
 import { PRIO_COLOR, formatDate, getReminderStatus, getDaysUntil } from "../utils";
 
 function SortableItem({ id, children }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });
   return (
-    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}>
+    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1, touchAction: "none" }}>
       {children({
         dragHandle: (
-          <button {...listeners} {...attributes} tabIndex={-1}
-            style={{ background:"none", border:"none", cursor:"grab", color:"#ccc", fontSize:18, padding:"2px 6px", touchAction:"none", lineHeight:1, flexShrink:0, display:"flex", alignItems:"center" }}
+          <button ref={setActivatorNodeRef} {...listeners} {...attributes} tabIndex={-1}
+            style={{ background:"none", border:"none", cursor:"grab", color:"#bbb", fontSize:20, padding:"4px 8px", touchAction:"none", lineHeight:1, flexShrink:0, display:"flex", alignItems:"center", minWidth:36, minHeight:36, justifyContent:"center" }}
             aria-label="גרור לשינוי סדר">⠿</button>
         ),
       })}
@@ -42,8 +42,8 @@ export default function TabContent({
   reorderTask,
 }) {
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 10 } }),
   );
 
   const renderTaskRow = (item, dragHandle = null) => {
