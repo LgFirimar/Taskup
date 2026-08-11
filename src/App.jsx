@@ -2437,7 +2437,6 @@ export default function App() {
           showListsMenu={showListsMenu} setShowListsMenu={setShowListsMenu}
           showProjects={showProjects} openProjectId={openProjectId} setShowProjects={setShowProjects} setOpenProjectId={setOpenProjectId}
           showEmail={showEmail} setShowEmail={setShowEmail}
-          showDailySchedule={showDailySchedule} setShowDailySchedule={setShowDailySchedule}
           setShowQuickCapture={setShowQuickCapture}
         />
 
