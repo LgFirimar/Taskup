@@ -46,10 +46,10 @@ export default function DailyScheduleOverlay({
   const mergeTravel = (items) => {
     const result = [];
     for (let i = 0; i < items.length; i++) {
-      if (items[i].isTravel && i + 1 < items.length) {
+      if (items[i].isTravel && i + 1 < items.length && !items[i + 1].isTravel) {
         result.push({ ...items[i + 1], _travel: items[i] });
         i++;
-      } else if (!items[i].isTravel) {
+      } else {
         result.push(items[i]);
       }
     }
