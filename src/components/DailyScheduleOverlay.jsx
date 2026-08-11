@@ -6,6 +6,7 @@ const PEACH = "#ea580c";
 
 export default function DailyScheduleOverlay({
   accent, setShowDailySchedule,
+  dayOffset, setDayOffset,
   items, plan, settings,
   addItem, addItems, toggleItem, deleteItem, editItem, replaceItems,
   saveSettings,
@@ -29,7 +30,8 @@ export default function DailyScheduleOverlay({
   const [editDuration, setEditDuration] = useState("");
 
   const hasItems = items.length > 0;
-  const todayLabel = new Date().toLocaleDateString("he-IL", { weekday: "long", day: "numeric", month: "long" });
+  const labelDate = (() => { const d = new Date(); d.setDate(d.getDate() + (dayOffset || 0)); return d; })();
+  const todayLabel = labelDate.toLocaleDateString("he-IL", { weekday: "long", day: "numeric", month: "long" });
 
   // Drag-to-reorder (same DOM-listener pattern to bypass React passive events)
   const [dragId, setDragId] = useState(null);
@@ -298,7 +300,17 @@ export default function DailyScheduleOverlay({
           <span style={{ fontSize: 11, fontWeight: 600 }}>חזרה</span>
         </button>
         <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: 18 }}>לו"ז יומי</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+            <div style={{ fontWeight: 700, fontSize: 18 }}>לו"ז יומי</div>
+            <div style={{ display: "flex", gap: 4 }}>
+              {[["היום", 0], ["מחר", 1]].map(([label, val]) => (
+                <button key={val} onClick={() => setDayOffset(val)}
+                  style={{ fontSize: 12, fontWeight: 700, padding: "2px 10px", borderRadius: 20, border: `1.5px solid ${(dayOffset||0)===val ? PEACH : "#e0e0de"}`, background: (dayOffset||0)===val ? PEACH : "white", color: (dayOffset||0)===val ? "white" : "#6b6b6b", cursor: "pointer", fontFamily: "'Heebo',sans-serif", transition: "all 0.15s" }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div style={{ fontSize: 12, color: "#6b6b6b" }}>{todayLabel}</div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>

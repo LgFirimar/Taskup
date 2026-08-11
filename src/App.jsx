@@ -157,6 +157,7 @@ export default function App() {
 
   // ── Daily schedule (לו"ז יומי) ───────────────────────────────────────────────
   const [showDailySchedule,setShowDailySchedule] = useState(false);
+  const [scheduleDayOffset,setScheduleDayOffset] = useState(0); // 0=היום 1=מחר
 
   // ── Projects ──────────────────────────────────────────────────────────────
   const [showProjects,setShowProjects] = useState(false);
@@ -559,6 +560,7 @@ export default function App() {
   // yesterday so late-night sessions don't lose their schedule at midnight.
   const scheduleKey = (() => {
     const n = new Date();
+    if (scheduleDayOffset === 1) { const t = new Date(n); t.setDate(t.getDate()+1); return t.toISOString().split("T")[0]; }
     if (n.getHours() < 3) { const y = new Date(n); y.setDate(y.getDate()-1); return y.toISOString().split("T")[0]; }
     return today();
   })();
@@ -602,9 +604,9 @@ export default function App() {
   const saveDailyScheduleSettings = (settings) => updateProfile(p=>({...p, dailyScheduleSettings:settings}));
   const nowMinForToday = () => { const n=new Date(); return n.getHours()*60+n.getMinutes(); };
   const dailySchedulePlan = useMemo(
-    ()=>computeDailySchedule(dailyScheduleItems, { dayStart:dailyScheduleSettings.dayStart, dayEnd:dailyScheduleSettings.dayEnd, nowMin:nowMinForToday() }),
+    ()=>computeDailySchedule(dailyScheduleItems, { dayStart:dailyScheduleSettings.dayStart, dayEnd:dailyScheduleSettings.dayEnd, nowMin:scheduleDayOffset===0?nowMinForToday():0 }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dailyScheduleItems, dailyScheduleSettings.dayStart, dailyScheduleSettings.dayEnd]
+    [dailyScheduleItems, dailyScheduleSettings.dayStart, dailyScheduleSettings.dayEnd, scheduleDayOffset]
   );
 
   // ── Projects ──────────────────────────────────────────────────────────────
@@ -2281,7 +2283,8 @@ export default function App() {
         {showDailySchedule&&(
           <DailyScheduleOverlay
             accent={accent}
-            setShowDailySchedule={setShowDailySchedule}
+            setShowDailySchedule={v => { setShowDailySchedule(v); if (!v) setScheduleDayOffset(0); }}
+            dayOffset={scheduleDayOffset} setDayOffset={setScheduleDayOffset}
             items={dailyScheduleItems} plan={dailySchedulePlan} settings={dailyScheduleSettings}
             addItem={addDailyScheduleItem} addItems={addDailyScheduleItems}
             toggleItem={toggleDailyScheduleItem} deleteItem={deleteDailyScheduleItem}
