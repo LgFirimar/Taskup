@@ -73,7 +73,8 @@ export const minToHHMM = (min) => {
 };
 export const computeDailySchedule = (items, { dayStart = "08:00", dayEnd = "21:00", nowMin = null } = {}) => {
   const dayStartMin = hhmmToMin(dayStart);
-  const dayEndMin = hhmmToMin(dayEnd);
+  // Support days that cross midnight (e.g. dayStart=08:00, dayEnd=01:00 → ends at 25:00)
+  const dayEndMin = hhmmToMin(dayEnd) < hhmmToMin(dayStart) ? hhmmToMin(dayEnd) + 24 * 60 : hhmmToMin(dayEnd);
   const pending = (items || []).filter(i => !i.done);
   const done = (items || []).filter(i => i.done);
 
