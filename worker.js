@@ -236,6 +236,18 @@ export default {
 
     if (request.method === "OPTIONS") return new Response(null, { headers });
 
+    // GET /shopping is public (no Origin required) so the daily briefing
+    // scheduled task can read it without a browser Origin header.
+    if (request.method === "GET" && new URL(request.url).pathname === "/shopping") {
+      if (!env.PUSH_KV) {
+        return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: { ...headers, "content-type": "application/json" } });
+      }
+      const data = await env.PUSH_KV.get("shopping_list", "json");
+      return new Response(JSON.stringify(data || { lists: [], updatedAt: null }), {
+        headers: { ...headers, "content-type": "application/json" },
+      });
+    }
+
     // Browsers already enforce CORS, but that's not a security boundary —
     // non-browser clients can send any Origin header they like, so we also
     // reject disallowed origins server-side before doing any real work.
@@ -463,24 +475,16 @@ ${taskList}
         return new Response(JSON.stringify({ ok: true }), { headers: { ...headers, "content-type": "application/json" } });
       }
 
-      if (url.pathname === "/shopping") {
+      if (request.method === "POST" && url.pathname === "/shopping") {
         if (!env.PUSH_KV) {
           return new Response(JSON.stringify({ error: "KV not configured" }), { status: 500, headers: { ...headers, "content-type": "application/json" } });
         }
-        if (request.method === "GET") {
-          const data = await env.PUSH_KV.get("shopping_list", "json");
-          return new Response(JSON.stringify(data || { lists: [], updatedAt: null }), {
-            headers: { ...headers, "content-type": "application/json" },
-          });
-        }
-        if (request.method === "POST") {
-          const body = await request.json();
-          await env.PUSH_KV.put("shopping_list", JSON.stringify({
-            lists: body.lists || [],
-            updatedAt: body.updatedAt || new Date().toISOString(),
-          }));
-          return new Response("{}", { headers: { ...headers, "content-type": "application/json" } });
-        }
+        const body = await request.json();
+        await env.PUSH_KV.put("shopping_list", JSON.stringify({
+          lists: body.lists || [],
+          updatedAt: body.updatedAt || new Date().toISOString(),
+        }));
+        return new Response("{}", { headers: { ...headers, "content-type": "application/json" } });
       }
 
       return new Response("Not found", { status: 404, headers });
