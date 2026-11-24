@@ -363,6 +363,10 @@ export default function App() {
     persistOrWarn(STORAGE_KEY, {profiles,activeProfile:activeProfileId}, "השינוי האחרון");
   },[profiles,activeProfileId]);
 
+  useEffect(()=>{
+    fetch(`${WORKER_URL}/shopping`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({lists:shoppingLists.map(l=>({name:l.name,items:l.items})),updatedAt:new Date().toISOString()})}).catch(()=>{});
+  },[shoppingLists]);
+
   // This is the one collection realistically at risk of exceeding
   // localStorage's quota (~5-10MB, can be tighter in a Safari/iOS PWA) —
   // see pruneEmailSummariesForQuota in utils.js for the full reasoning. A
