@@ -364,10 +364,6 @@ export default function App() {
     persistOrWarn(STORAGE_KEY, {profiles,activeProfile:activeProfileId}, "השינוי האחרון");
   },[profiles,activeProfileId]);
 
-  useEffect(()=>{
-    fetch(`${WORKER_URL}/shopping`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({lists:shoppingLists.map(l=>({name:l.name,items:l.items})),updatedAt:new Date().toISOString()})}).catch(()=>{});
-  },[shoppingLists]);
-
   // This is the one collection realistically at risk of exceeding
   // localStorage's quota (~5-10MB, can be tighter in a Safari/iOS PWA) —
   // see pruneEmailSummariesForQuota in utils.js for the full reasoning. A
@@ -514,6 +510,9 @@ export default function App() {
 
   // ── Shopping ──────────────────────────────────────────────────────────────
   const shoppingLists = getProfile().shopping||[];
+  useEffect(()=>{
+    fetch(`${WORKER_URL}/shopping`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({lists:shoppingLists.map(l=>({name:l.name,items:l.items})),updatedAt:new Date().toISOString()})}).catch(()=>{});
+  },[shoppingLists]);
   const addShoppingList = (name)=>{ if(!name.trim())return; updateProfile(p=>({...p,shopping:[...(p.shopping||[]),{id:uid(),name:name.trim(),items:[]}]})); };
   const addShoppingItem = (lid,text)=>{ if(!text.trim())return; updateProfile(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id===lid?{...l,items:[...l.items,{id:uid(),text:text.trim()}]}:l)})); };
   const deleteShoppingItem = (lid,iid)=>updateProfile(p=>({...p,shopping:(p.shopping||[]).map(l=>l.id===lid?{...l,items:l.items.filter(i=>i.id!==iid)}:l)}));
